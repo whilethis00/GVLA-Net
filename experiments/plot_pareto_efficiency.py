@@ -29,7 +29,7 @@ def main() -> None:
 
     data = {
         "GVLA-Net (Ours)": {
-            "bits": ["20b", "22b", "24b"],
+            "bits": ["20-bit", "22-bit", "24-bit"],
             "latency_ms": [12.78, 21.52, 24.07],
             "unique_ratio": [0.6325, 0.8852, 0.9695],
             "color": "#d1495b",
@@ -40,7 +40,7 @@ def main() -> None:
             "zorder": 4,
         },
         "LSH (Random Projection)": {
-            "bits": ["20b", "22b", "24b"],
+            "bits": ["20-bit", "22-bit", "24-bit"],
             "latency_ms": [24.78, 15.51, 21.25],
             "unique_ratio": [0.3748, 0.5405, 0.7649],
             "color": "#6c757d",
@@ -51,7 +51,7 @@ def main() -> None:
             "zorder": 3,
         },
         "Product Quantization (PQ)": {
-            "bits": ["20b", "24b"],
+            "bits": ["20-bit", "24-bit"],
             "latency_ms": [208.05, 262.38],
             "unique_ratio": [0.6306, 0.9691],
             "color": "#f4a261",

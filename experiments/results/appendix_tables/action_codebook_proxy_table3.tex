@@ -1,0 +1,20 @@
+\begin{table}[t]
+\centering
+\caption{Action codebook proxy test across fixed and overcomplete code budgets. We compare product quantization (PQ), random-projection LSH, and GVLA's orthogonal geometric hashing on $N=2^{20}$ synthetic continuous actions. Occupancy efficiency is the realized unique-code ratio divided by the ideal Poisson occupancy limit at load factor $\lambda = N / 2^k$.}
+\label{tab:proxy_collision_test}
+\scriptsize
+\begin{tabular}{lrrrrrr}
+\toprule
+Method & Bits & Collision Rate & Occ. Eff. & Unique Code Ratio & Recon. MSE & Total ms \\
+\midrule
+GVLA-Net (Ours) & 20 & 0.6314 & 1.0006 & 0.6325 & 0.031586 & 23.69 \\
+LSH (Random Projection) & 20 & 0.8225 & 0.5930 & 0.3748 & 0.032874 & 34.74 \\
+PQ & 20 & 0.6338 & 0.9976 & 0.6306 & 0.016075 & 232.37 \\
+GVLA-Net (Ours) & 22 & 0.2205 & 1.0005 & 0.8852 & 0.031303 & 66.58 \\
+LSH (Random Projection) & 22 & 0.6503 & 0.6109 & 0.5405 & 0.032287 & 36.52 \\
+GVLA-Net (Ours) & 24 & 0.0604 & 1.0001 & 0.9695 & 0.031255 & 40.92 \\
+LSH (Random Projection) & 24 & 0.3815 & 0.7890 & 0.7649 & 0.031567 & 62.86 \\
+PQ & 24 & 0.0611 & 0.9997 & 0.9691 & 0.013693 & 288.40 \\
+\bottomrule
+\end{tabular}
+\end{table}

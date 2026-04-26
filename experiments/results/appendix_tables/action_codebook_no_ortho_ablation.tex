@@ -1,0 +1,18 @@
+\begin{table}[t]
+\centering
+\caption{Orthogonality-removal ablation on the action codebook proxy test at $N=2^{20}$. We compare the full GVLA model against the same projection-family decoder with orthogonal regularization removed. Mean $|\cos|$ reports average pairwise row correlation in the projection matrix.}
+\label{tab:no_ortho_ablation}
+\scriptsize
+\begin{tabular}{lrrrrrr}
+\toprule
+Method & Bits & Mean $|\cos|$ & Collision Rate & Occ. Eff. & Unique Code Ratio & Total ms \\
+\midrule
+GVLA-Net (Ours) & 20 & 0.0000 & 0.6314 & 1.0006 & 0.6325 & 17.91 \\
+GVLA w/o Orthogonal Reg. & 20 & 0.2084 & 0.8946 & 0.3483 & 0.2202 & 16.91 \\
+GVLA-Net (Ours) & 22 & 0.0000 & 0.2205 & 1.0005 & 0.8852 & 18.43 \\
+GVLA w/o Orthogonal Reg. & 22 & 0.1898 & 0.7738 & 0.4240 & 0.3752 & 24.01 \\
+GVLA-Net (Ours) & 24 & 0.0000 & 0.0604 & 1.0001 & 0.9695 & 23.11 \\
+GVLA w/o Orthogonal Reg. & 24 & 0.2113 & 0.6303 & 0.5337 & 0.5173 & 35.19 \\
+\bottomrule
+\end{tabular}
+\end{table}

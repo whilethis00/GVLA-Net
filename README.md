@@ -421,6 +421,54 @@ This is the formal sense in which orthogonality supports logarithmic decoding: o
 
 ---
 
+## 부록 C. Proxy Test — Action Codebook Collision & Occupancy
+
+> 산출물:
+> [Table3 CSV](/home/introai11/.agile/users/hsjung/projects/GVLA-Net/experiments/results/appendix_tables/action_codebook_proxy_table3.csv)
+> [Table3 TeX](/home/introai11/.agile/users/hsjung/projects/GVLA-Net/experiments/results/appendix_tables/action_codebook_proxy_table3.tex)
+
+물리 시뮬레이터를 쓰지 않고도, 대규모 action codebook에서 각 방법이 얼마나 효율적으로 공간을 쓰는지 직접 측정하는 proxy test를 추가했습니다. 비교군은 `PQ`, `LSH (Random Projection)`, `GVLA-Net (Ours)`이며, 고정 예산 `N=2^{20}` actions에서 `20/22/24 bit` 코드를 사용했습니다.
+
+핵심 결과는 다음과 같습니다.
+
+| Method | Bits | Collision Rate | Occupancy Efficiency | Recon. MSE | Total ms |
+|--------|------|----------------|----------------------|------------|----------|
+| GVLA-Net (Ours) | 20 | **0.6314** | **1.0006** | 0.031586 | **23.69** |
+| LSH (Random Projection) | 20 | 0.8225 | 0.5930 | 0.032874 | 34.74 |
+| PQ | 20 | 0.6338 | 0.9976 | **0.016075** | 232.37 |
+| GVLA-Net (Ours) | 22 | **0.2205** | **1.0005** | 0.031303 | 66.58 |
+| LSH (Random Projection) | 22 | 0.6503 | 0.6109 | 0.032287 | **36.52** |
+| GVLA-Net (Ours) | 24 | **0.0604** | **1.0001** | 0.031255 | **40.92** |
+| LSH (Random Projection) | 24 | 0.3815 | 0.7890 | 0.031567 | 62.86 |
+| PQ | 24 | 0.0611 | 0.9997 | **0.013693** | 288.40 |
+
+여기서 `occupancy efficiency`는 실제 unique-code ratio를 이상적 Poisson 점유 한계 $1-e^{-\lambda}$로 정규화한 값입니다. `GVLA`는 `20/22/24 bit` 전 구간에서 이 값이 거의 `1.0`에 붙어, 직교 투영이 해시 공간을 거의 이상적으로 채운다는 점을 보여줍니다. 반면 `Random LSH`는 같은 비트 예산에서도 점유 효율이 낮아 충돌률이 크게 남습니다.
+
+또한 `PQ`는 reconstruction MSE 측면에서는 가장 강하지만, 그 대가로 encode/decode 비용이 매우 큽니다. 특히 `24 bit` 설정에서 `PQ`는 `GVLA`와 거의 같은 collision regime에 도달하지만, 총 지연 시간은 `288.40 ms`로 `GVLA`의 `40.92 ms`보다 훨씬 큽니다. 따라서 이 proxy test는 `GVLA`가 "이상적인 점유 효율 + 낮은 충돌 + 빠른 코드 할당" 조합을 제공한다는 점을 appendix 차원에서 뒷받침합니다.
+
+### Orthogonality Removal Ablation
+
+> 산출물:
+> [Ablation CSV](/home/introai11/.agile/users/hsjung/projects/GVLA-Net/experiments/results/appendix_tables/action_codebook_no_ortho_ablation.csv)
+> [Ablation TeX](/home/introai11/.agile/users/hsjung/projects/GVLA-Net/experiments/results/appendix_tables/action_codebook_no_ortho_ablation.tex)
+
+직교성 제약이 핵심이라는 점을 분리해서 보기 위해, 같은 projection-family 안에서 `GVLA-Net (Ours)`와 `GVLA w/o Orthogonal Regularization`을 직접 비교했습니다. 이 ablation에서는 행 간 평균 절대 코사인 유사도(mean absolute row cosine)를 함께 기록해, 실제로 직교성이 깨졌는지 수치로 보여줍니다.
+
+핵심 결과는 다음과 같습니다.
+
+| Method | Bits | Mean \|cos\| | Collision Rate | Occupancy Efficiency | Unique Code Ratio |
+|--------|------|-------------:|----------------|----------------------|-------------------|
+| GVLA-Net (Ours) | 20 | **0.0000** | **0.6314** | **1.0006** | **0.6325** |
+| GVLA w/o Orthogonal Reg. | 20 | 0.2084 | 0.8946 | 0.3483 | 0.2202 |
+| GVLA-Net (Ours) | 22 | **0.0000** | **0.2205** | **1.0005** | **0.8852** |
+| GVLA w/o Orthogonal Reg. | 22 | 0.1898 | 0.7738 | 0.4240 | 0.3752 |
+| GVLA-Net (Ours) | 24 | **0.0000** | **0.0604** | **1.0001** | **0.9695** |
+| GVLA w/o Orthogonal Reg. | 24 | 0.2113 | 0.6303 | 0.5337 | 0.5173 |
+
+결과는 매우 일관적입니다. 직교성 제약을 제거하면 행 간 상관이 커지고(`mean |cos| \approx 0.19\text{--}0.21`), occupancy efficiency가 급격히 붕괴합니다. 특히 `24 bit`처럼 overcomplete budget에서도 `GVLA-Net`은 `collision=0.0604`, `occupancy efficiency=1.0001`을 유지하는 반면, `w/o orthogonality`는 `collision=0.6303`, `occupancy efficiency=0.5337`까지 무너집니다. 즉, 우리 모델의 핵심은 단순한 projection shell이 아니라, **직교성 자체가 해시 공간의 균형성과 대규모 action routing의 안정성을 만든다**는 점입니다.
+
+---
+
 ## 하드웨어 효율성 분석
 
 GVLA-Net의 이점은 단순 FLOPs 감소를 넘어, 실제 하드웨어 수준의 효율성으로 이어집니다.
