@@ -80,8 +80,17 @@ def build_run_dir(output_root: Path, run_name: str) -> Path:
 
 def infer_model_metadata(model: OctoModel) -> tuple[int, int, int]:
     observation_spec = model.example_batch["observation"]
-    proprio_dim = int(observation_spec["proprio"].shape[-1])
-    image_shape = observation_spec["image_primary"].shape
+    proprio_spec = observation_spec.get("proprio")
+    proprio_dim = int(proprio_spec.shape[-1]) if proprio_spec is not None else 0
+
+    image_key = next((key for key in observation_spec if key.startswith("image_")), None)
+    if image_key is None:
+        raise KeyError(
+            f"Could not find an image observation key in example_batch['observation']; "
+            f"available keys: {sorted(observation_spec.keys())}"
+        )
+
+    image_shape = observation_spec[image_key].shape
     image_size = int(image_shape[-2] if image_shape[-1] == 3 else image_shape[-3])
 
     dataset_stats = model.dataset_statistics

@@ -16,9 +16,9 @@ class OctoLightweightReachEnv(gym.Env):
     """A MuJoCo-free Gym env for lightweight Octo rollout sanity checks.
 
     This environment is intentionally simple: a point-effector moves in a 2D plane
-    using the first two action dimensions. The observation format matches the keys
-    Octo expects (`image_primary`, `proprio`), which makes it useful as a lightweight
-    integration harness before switching to a heavier simulator.
+    using the first two action dimensions. The observation format always includes
+    `image_primary` and can optionally include `proprio`, which makes it useful as a
+    lightweight integration harness before switching to a heavier simulator.
     """
 
     metadata = {"render_modes": ["rgb_array"], "render_fps": 20}
@@ -37,8 +37,8 @@ class OctoLightweightReachEnv(gym.Env):
         super().__init__()
         if action_dim < 2:
             raise ValueError(f"action_dim must be >= 2, got {action_dim}")
-        if proprio_dim < 2:
-            raise ValueError(f"proprio_dim must be >= 2, got {proprio_dim}")
+        if proprio_dim < 0:
+            raise ValueError(f"proprio_dim must be >= 0, got {proprio_dim}")
 
         self.action_dim = int(action_dim)
         self.proprio_dim = int(proprio_dim)
@@ -54,22 +54,22 @@ class OctoLightweightReachEnv(gym.Env):
             target_xy=np.zeros(2, dtype=np.float32),
         )
 
-        self.observation_space = gym.spaces.Dict(
-            {
-                "image_primary": gym.spaces.Box(
-                    low=0,
-                    high=255,
-                    shape=(self.image_size, self.image_size, 3),
-                    dtype=np.uint8,
-                ),
-                "proprio": gym.spaces.Box(
-                    low=-1.0,
-                    high=1.0,
-                    shape=(self.proprio_dim,),
-                    dtype=np.float32,
-                ),
-            }
-        )
+        obs_spaces = {
+            "image_primary": gym.spaces.Box(
+                low=0,
+                high=255,
+                shape=(self.image_size, self.image_size, 3),
+                dtype=np.uint8,
+            ),
+        }
+        if self.proprio_dim > 0:
+            obs_spaces["proprio"] = gym.spaces.Box(
+                low=-1.0,
+                high=1.0,
+                shape=(self.proprio_dim,),
+                dtype=np.float32,
+            )
+        self.observation_space = gym.spaces.Dict(obs_spaces)
         self.action_space = gym.spaces.Box(
             low=-1.0,
             high=1.0,
@@ -107,16 +107,16 @@ class OctoLightweightReachEnv(gym.Env):
         image[mask] = color
 
     def _get_obs(self) -> dict[str, np.ndarray]:
-        proprio = np.zeros(self.proprio_dim, dtype=np.float32)
-        proprio[0:2] = self._state_xy
-        if self.proprio_dim >= 4:
-            proprio[2:4] = self._task.target_xy - self._state_xy
-        if self.proprio_dim >= 5:
-            proprio[4] = np.linalg.norm(self._task.target_xy - self._state_xy)
-        return {
-            "image_primary": self._render_image(),
-            "proprio": proprio,
-        }
+        obs = {"image_primary": self._render_image()}
+        if self.proprio_dim > 0:
+            proprio = np.zeros(self.proprio_dim, dtype=np.float32)
+            proprio[0:2] = self._state_xy
+            if self.proprio_dim >= 4:
+                proprio[2:4] = self._task.target_xy - self._state_xy
+            if self.proprio_dim >= 5:
+                proprio[4] = np.linalg.norm(self._task.target_xy - self._state_xy)
+            obs["proprio"] = proprio
+        return obs
 
     def compute_success(self) -> bool:
         return np.linalg.norm(self._task.target_xy - self._state_xy) <= self.success_tolerance
@@ -154,4 +154,3 @@ class OctoLightweightReachEnv(gym.Env):
 
     def render(self):
         return self._render_image()
-
