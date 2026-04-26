@@ -288,11 +288,14 @@ python experiments/export_neurips_table.py    # 논문용 테이블 생성
 
 직교 W는 WW^T = I (완벽한 단위 행렬), 랜덤 W는 비대각 노이즈가 가득. **off-diag std = 0.0000 vs 0.0904**.
 
-### Figure 2 — Bit Independence & Entropy Analysis
+### Figure 2 — 코드북 기하학 종합 분석 (Collision · Valid Code Rate · Alignment)
 
-![Fig2 Entropy](experiments/results/figures/fig2_bit_entropy_paper.png)
+![Fig2 Collision](experiments/results/figures/fig2_collision_paper.png)
 
-직교 W: 모든 비트의 엔트로피 = **0.999984 bits** (이론적 최대 1.0), 쌍별 MI = **0.000016**. 각 비트가 완전히 독립적인 새 정보를 담는다는 수학적 증명.
+세 가지 관점에서 직교 W의 우월성을 동시에 입증합니다.
+- **Row 1 (해시 충돌 분포)**: 직교 W는 Poisson(λ=1) 이상에 근접 — 셀 점유가 거의 완벽히 균일. 랜덤 W는 빈 셀 과다 + 충돌 셀 과다.
+- **Row 2 左 (Valid Code Rate vs N)**: 직교 W는 이론 Poisson 곡선(`1−e^{−N/C}`)에 딱 붙어 있고, 랜덤 W는 전 구간에서 아래로 처짐.
+- **Row 2 中 (Alignment vs d)**: 직교 W의 오프-다이아고널 평균은 **d에 관계없이 ~0** (직교 보장). 랜덤 W는 d가 커질수록 점차 개선되지만 수렴이 느림.
 
 ### Figure 3 — 3D Latent Space Partitioning
 

@@ -119,249 +119,300 @@ def make_fig1(dark: bool):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FIGURE 2 — Bit Independence & Entropy
+# FIGURE 2 — Codebook Geometric Analysis (3-part)
+#   Row 1: Hash Collision Distribution (Orth vs Rand, Poisson ref, cell breakdown)
+#   Row 2: Valid Code Rate vs N  |  Codebook Alignment vs d  |  Summary
 # ══════════════════════════════════════════════════════════════════════════════
 def make_fig2(dark: bool):
-    k, d = 20, 256
-    N_SAMPLES = 50_000
-    W_orth = make_orthogonal_W(d, k)
-    W_rand = make_random_W(d, k)
+    from math import factorial, exp as mexp
+    from matplotlib.patches import FancyBboxPatch
 
-    states = torch.randn(N_SAMPLES, d)
+    torch.manual_seed(42); np.random.seed(42)
 
-    def get_bits(W):
-        proj  = states @ W.T          # (N, k)
-        bits  = (proj > 0).float()   # {0,1}
-        return bits.numpy()
+    # ── PART 1: Collision Distribution  k=17, d=32 ───────────────────────────
+    k_c, d_c = 17, 32
+    N_C = 2 ** k_c   # 131,072
 
-    bits_orth = get_bits(W_orth)
-    bits_rand = get_bits(W_rand)
+    W_co = make_orthogonal_W(d_c, k_c)
+    W_cr = make_random_W(d_c, k_c)
 
-    def per_bit_entropy(bits):
-        p = bits.mean(axis=0)        # P(bit=1) per dimension
-        p_clipped = np.clip(p, 1e-10, 1 - 1e-10)
-        h = -(p_clipped * np.log2(p_clipped)
-              + (1 - p_clipped) * np.log2(1 - p_clipped))
-        return p, h
+    def bin_occ(W, k):
+        N = 2 ** k
+        s = torch.randn(N, W.shape[1])
+        pw = (2 ** torch.arange(k)).long()
+        h = ((s @ W.T > 0).int().long() * pw).sum(1).numpy()
+        return np.bincount(h, minlength=N)
 
-    def mutual_information_matrix(bits, n_bins=2):
-        """Pairwise MI between all bit pairs (sampled for speed)."""
-        k = bits.shape[1]
-        mi = np.zeros((k, k))
-        for i in range(k):
-            for j in range(i, k):
-                if i == j:
-                    mi[i, j] = 1.0   # placeholder
-                    continue
-                # Joint distribution over {0,1}x{0,1}
-                joint = np.zeros((2, 2))
-                for bi in range(2):
-                    for bj in range(2):
-                        joint[bi, bj] = ((bits[:, i] == bi) & (bits[:, j] == bj)).mean()
-                px  = joint.sum(axis=1)
-                py  = joint.sum(axis=0)
-                for bi in range(2):
-                    for bj in range(2):
-                        if joint[bi, bj] > 1e-10:
-                            mi[i, j] += joint[bi, bj] * np.log2(
-                                joint[bi, bj] / (px[bi] * py[bj] + 1e-10))
-                mi[j, i] = mi[i, j]
-        return mi
+    print("  [fig2] collision: orth...")
+    occ_o = bin_occ(W_co, k_c)
+    print("  [fig2] collision: rand...")
+    occ_r = bin_occ(W_cr, k_c)
 
-    p_orth, h_orth = per_bit_entropy(bits_orth)
-    p_rand, h_rand = per_bit_entropy(bits_rand)
-    mi_orth = mutual_information_matrix(bits_orth)
-    mi_rand = mutual_information_matrix(bits_rand)
-    # Zero diagonal for display
-    np.fill_diagonal(mi_orth, 0)
-    np.fill_diagonal(mi_rand, 0)
+    def cell_stats(occ, N):
+        return dict(empty=(occ == 0).sum(), single=(occ == 1).sum(),
+                    collision=(occ >= 2).sum(), max_occ=int(occ.max()),
+                    valid_rate=(occ > 0).sum() / N)
 
+    st_o = cell_stats(occ_o, N_C)
+    st_r = cell_stats(occ_r, N_C)
+
+    lam = 1.0
+    max_show = min(int(max(occ_o.max(), occ_r.max())) + 1, 10)
+    x_occ = np.arange(0, max_show + 1)
+    poisson_ref = np.array([N_C * mexp(-lam) * lam**v / factorial(v) for v in x_occ])
+    y_o = np.array([(occ_o == v).sum() for v in x_occ], dtype=float)
+    y_r = np.array([(occ_r == v).sum() for v in x_occ], dtype=float)
+
+    # ── PART 2: Valid Code Rate vs N  (k=16, d=32 fixed) ─────────────────────
+    k_v, d_v = 16, 32
+    N_cells_v = 2 ** k_v   # 65,536
+    N_vals = [200, 500, 1000, 2000, 5000, 10000, 20000, 65536, 131072, 262144]
+
+    W_vo = make_orthogonal_W(d_v, k_v)
+    W_vr = make_random_W(d_v, k_v)
+    pw_v = (2 ** torch.arange(k_v)).long()
+
+    vcr_o, vcr_r = [], []
+    for Nv in N_vals:
+        ro, rr = [], []
+        for seed in [42, 123, 456]:
+            torch.manual_seed(seed)
+            s = torch.randn(Nv, d_v)
+            for W, lst in [(W_vo, ro), (W_vr, rr)]:
+                h = ((s @ W.T > 0).int().long() * pw_v).sum(1).numpy()
+                occ = np.bincount(h, minlength=N_cells_v)
+                lst.append((occ > 0).sum() / N_cells_v)
+        vcr_o.append(np.mean(ro)); vcr_r.append(np.mean(rr))
+    vcr_o = np.array(vcr_o); vcr_r = np.array(vcr_r)
+
+    N_theory = np.logspace(np.log10(200), np.log10(262144), 120)
+    vcr_theory = 1 - np.exp(-N_theory / N_cells_v)
+
+    print("  [fig2] vcr computed")
+
+    # ── PART 3: Codebook Alignment vs d  (k=16 fixed, d: 16→512) ─────────────
+    k_a = 16
+    d_list = [16, 32, 64, 128, 256, 512]
+    aln_o, aln_r = [], []
+    for d_a in d_list:
+        for make_fn, lst in [(make_orthogonal_W, aln_o), (make_random_W, aln_r)]:
+            W = make_fn(d_a, k_a)
+            G = (W @ W.T).numpy()
+            off_mask = ~np.eye(k_a, dtype=bool)
+            lst.append(np.abs(G[off_mask]).mean())
+    aln_theory = [np.sqrt(2 / (np.pi * d_a)) for d_a in d_list]
+
+    print("  [fig2] alignment computed")
+
+    # ── THEME ──────────────────────────────────────────────────────────────────
     if dark:
         plt.style.use('dark_background')
         FIG_FACE = '#0E0E0E'; AX_FACE = '#1A1A2E'
-        TEXT = '#FFFFFF'; SUB = '#AAAAAA'; SPINE = '#444444'
+        TEXT = '#FFFFFF';  SUB = '#AAAAAA';  SPINE = '#444444'
         C_ORTH = '#4ECDC4'; C_RAND = '#FF6B6B'
-        MI_CMAP = 'YlOrRd'
+        GOLD   = '#FFD700'; BOX_BG = '#2A2A4A'; C_TH = '#AAAAFF'
         suffix = ""
     else:
         plt.rcdefaults()
         FIG_FACE = '#FFFFFF'; AX_FACE = '#FFFFFF'
-        TEXT = '#111111'; SUB = '#555555'; SPINE = '#AAAAAA'
+        TEXT = '#111111';  SUB = '#555555';  SPINE = '#AAAAAA'
         C_ORTH = '#1A9E94'; C_RAND = '#C0392B'
-        MI_CMAP = 'YlOrRd'
+        GOLD   = '#B07D00'; BOX_BG = '#EEF4FF'; C_TH = '#6655BB'
         suffix = "_paper"
 
-    fig = plt.figure(figsize=(16, 10))
+    fig = plt.figure(figsize=(18, 10))
     fig.patch.set_facecolor(FIG_FACE)
-    gs = gridspec.GridSpec(2, 3, figure=fig, hspace=0.45, wspace=0.38)
-    ax_p_orth  = fig.add_subplot(gs[0, 0])
-    ax_p_rand  = fig.add_subplot(gs[0, 1])
-    ax_h_comp  = fig.add_subplot(gs[0, 2])
-    ax_mi_orth = fig.add_subplot(gs[1, 0])
-    ax_mi_rand = fig.add_subplot(gs[1, 1])
-    ax_summary = fig.add_subplot(gs[1, 2])
+    gs = gridspec.GridSpec(2, 3, figure=fig, hspace=0.50, wspace=0.38)
 
-    for ax in [ax_p_orth, ax_p_rand, ax_h_comp,
-               ax_mi_orth, ax_mi_rand, ax_summary]:
+    ax_ho  = fig.add_subplot(gs[0, 0])   # collision hist — orth
+    ax_hr  = fig.add_subplot(gs[0, 1])   # collision hist — rand
+    ax_hc  = fig.add_subplot(gs[0, 2])   # cell breakdown
+    ax_vcr = fig.add_subplot(gs[1, 0])   # valid code rate vs N
+    ax_aln = fig.add_subplot(gs[1, 1])   # alignment vs d
+    ax_sum = fig.add_subplot(gs[1, 2])   # summary box
+
+    for ax in [ax_ho, ax_hr, ax_hc, ax_vcr, ax_aln, ax_sum]:
         ax.set_facecolor(AX_FACE)
-        for spine in ax.spines.values():
-            spine.set_edgecolor(SPINE)
+        for sp in ax.spines.values():
+            sp.set_edgecolor(SPINE)
 
-    x = np.arange(k)
-    bar_kw = dict(width=0.7, edgecolor=TEXT, linewidth=0.4, alpha=0.85)
+    bar_kw = dict(edgecolor=TEXT, linewidth=0.5, alpha=0.88, zorder=3)
 
-    # ── P(bit=1) bars: Orthogonal ────────────────────────────────────────────
-    bars = ax_p_orth.bar(x, p_orth, color=C_ORTH, **bar_kw)
-    ax_p_orth.axhline(0.5, color='#FFD700' if dark else '#B07D00',
-                      lw=1.5, ls='--', label='Ideal = 0.5')
-    ax_p_orth.set_ylim(0, 1.05)
-    ax_p_orth.set_xlabel("Bit index", fontsize=10, color=TEXT)
-    ax_p_orth.set_ylabel(r"$P(\mathrm{bit}_i = 1)$", fontsize=10, color=TEXT)
-    ax_p_orth.set_title("Orthogonal W\nBit Activation Probability",
-                        fontsize=11, color=TEXT, fontweight='bold')
-    ax_p_orth.tick_params(colors=TEXT, labelsize=8)
-    ax_p_orth.legend(fontsize=8, framealpha=0.3, labelcolor=TEXT)
-    ax_p_orth.grid(axis='y', alpha=0.15, linestyle='--')
-    ax_p_orth.text(0.98, 0.96, f"mean = {p_orth.mean():.3f}\nstd = {p_orth.std():.4f}",
-                   transform=ax_p_orth.transAxes, fontsize=8.5, color=TEXT,
-                   ha='right', va='top', fontfamily='monospace',
-                   bbox=dict(boxstyle='round,pad=0.3',
-                             facecolor='#2A2A4A' if dark else '#EEF4FF',
-                             edgecolor=C_ORTH, alpha=0.9))
+    # ── Panel 1: Orthogonal W collision histogram ─────────────────────────────
+    ax_ho.bar(x_occ, np.where(y_o > 0, y_o, np.nan), color=C_ORTH, **bar_kw)
+    ax_ho.plot(x_occ, poisson_ref, 'o--', color=GOLD, lw=1.5, ms=5,
+               label='Poisson(λ=1)', zorder=5)
+    ax_ho.set_yscale('log')
+    ax_ho.set_xlabel("Actions per cell (occupancy)", fontsize=10, color=TEXT)
+    ax_ho.set_ylabel("Number of cells (log)", fontsize=10, color=TEXT)
+    ax_ho.set_title("Orthogonal W\nHash Collision Distribution",
+                    fontsize=11, color=TEXT, fontweight='bold')
+    ax_ho.set_xticks(x_occ)
+    ax_ho.tick_params(colors=TEXT, labelsize=8)
+    ax_ho.grid(axis='y', alpha=0.15, ls='--')
+    ax_ho.legend(fontsize=8.5, framealpha=0.35, labelcolor=TEXT)
+    ax_ho.text(0.97, 0.97,
+               f"Valid: {st_o['valid_rate']:.1%}\n"
+               f"Collisions: {st_o['collision']:,}",
+               transform=ax_ho.transAxes, fontsize=8, color=TEXT,
+               ha='right', va='top', fontfamily='monospace',
+               bbox=dict(boxstyle='round,pad=0.3', facecolor=BOX_BG,
+                         edgecolor=C_ORTH, alpha=0.92))
 
-    # ── P(bit=1) bars: Random ────────────────────────────────────────────────
-    ax_p_rand.bar(x, p_rand, color=C_RAND, **bar_kw)
-    ax_p_rand.axhline(0.5, color='#FFD700' if dark else '#B07D00',
-                      lw=1.5, ls='--', label='Ideal = 0.5')
-    ax_p_rand.set_ylim(0, 1.05)
-    ax_p_rand.set_xlabel("Bit index", fontsize=10, color=TEXT)
-    ax_p_rand.set_ylabel(r"$P(\mathrm{bit}_i = 1)$", fontsize=10, color=TEXT)
-    ax_p_rand.set_title("Random W\nBit Activation Probability",
-                        fontsize=11, color=TEXT, fontweight='bold')
-    ax_p_rand.tick_params(colors=TEXT, labelsize=8)
-    ax_p_rand.legend(fontsize=8, framealpha=0.3, labelcolor=TEXT)
-    ax_p_rand.grid(axis='y', alpha=0.15, linestyle='--')
-    ax_p_rand.text(0.98, 0.96, f"mean = {p_rand.mean():.3f}\nstd = {p_rand.std():.4f}",
-                   transform=ax_p_rand.transAxes, fontsize=8.5, color=TEXT,
-                   ha='right', va='top', fontfamily='monospace',
-                   bbox=dict(boxstyle='round,pad=0.3',
-                             facecolor='#2A2A4A' if dark else '#EEF4FF',
-                             edgecolor=C_RAND, alpha=0.9))
+    # ── Panel 2: Random W collision histogram ─────────────────────────────────
+    ax_hr.bar(x_occ, np.where(y_r > 0, y_r, np.nan), color=C_RAND, **bar_kw)
+    ax_hr.plot(x_occ, poisson_ref, 'o--', color=GOLD, lw=1.5, ms=5,
+               label='Poisson(λ=1)', zorder=5)
+    ax_hr.set_yscale('log')
+    ax_hr.set_xlabel("Actions per cell (occupancy)", fontsize=10, color=TEXT)
+    ax_hr.set_ylabel("Number of cells (log)", fontsize=10, color=TEXT)
+    ax_hr.set_title("Random W\nHash Collision Distribution",
+                    fontsize=11, color=TEXT, fontweight='bold')
+    ax_hr.set_xticks(x_occ)
+    ax_hr.tick_params(colors=TEXT, labelsize=8)
+    ax_hr.grid(axis='y', alpha=0.15, ls='--')
+    ax_hr.legend(fontsize=8.5, framealpha=0.35, labelcolor=TEXT)
+    ax_hr.text(0.97, 0.97,
+               f"Valid: {st_r['valid_rate']:.1%}\n"
+               f"Collisions: {st_r['collision']:,}",
+               transform=ax_hr.transAxes, fontsize=8, color=TEXT,
+               ha='right', va='top', fontfamily='monospace',
+               bbox=dict(boxstyle='round,pad=0.3', facecolor=BOX_BG,
+                         edgecolor=C_RAND, alpha=0.92))
 
-    # ── Entropy comparison ───────────────────────────────────────────────────
-    w = 0.35
-    bar_kw_w = dict(edgecolor=TEXT, linewidth=0.4, alpha=0.85)
-    ax_h_comp.bar(x - w/2, h_orth, width=w, color=C_ORTH,
-                  label='Orthogonal W', **bar_kw_w)
-    ax_h_comp.bar(x + w/2, h_rand, width=w, color=C_RAND,
-                  label='Random W', **bar_kw_w)
-    ax_h_comp.axhline(1.0, color='#FFD700' if dark else '#B07D00',
-                      lw=1.5, ls='--', label='Max entropy = 1 bit')
-    ax_h_comp.set_ylim(0, 1.15)
-    ax_h_comp.set_xlabel("Bit index", fontsize=10, color=TEXT)
-    ax_h_comp.set_ylabel("Shannon Entropy (bits)", fontsize=10, color=TEXT)
-    ax_h_comp.set_title("Per-bit Entropy\n(Higher = More Independent)",
-                        fontsize=11, color=TEXT, fontweight='bold')
-    ax_h_comp.tick_params(colors=TEXT, labelsize=8)
-    ax_h_comp.legend(fontsize=8, framealpha=0.3, labelcolor=TEXT, loc='lower right')
-    ax_h_comp.grid(axis='y', alpha=0.15, linestyle='--')
-    ax_h_comp.text(0.02, 0.04,
-                   f"Orth mean H = {h_orth.mean():.4f} bits\n"
-                   f"Rand mean H = {h_rand.mean():.4f} bits",
-                   transform=ax_h_comp.transAxes, fontsize=8.5, color=TEXT,
-                   ha='left', va='bottom', fontfamily='monospace',
-                   bbox=dict(boxstyle='round,pad=0.3',
-                             facecolor='#2A2A4A' if dark else '#EEF4FF',
-                             edgecolor='#888888', alpha=0.9))
+    # ── Panel 3: Cell usage stacked bars ──────────────────────────────────────
+    cats    = ['Empty\n(wasted)', 'Single\n(ideal)', 'Collision\n(>=2)']
+    v_o_c   = [st_o['empty'], st_o['single'], st_o['collision']]
+    v_r_c   = [st_r['empty'], st_r['single'], st_r['collision']]
+    cat_col = ['#888888', C_ORTH, '#E74C3C']
+    x_pos   = np.array([0.22, 0.72]); bw = 0.38
+    bot_o = bot_r = 0
+    for label, co, cr, cc in zip(cats, v_o_c, v_r_c, cat_col):
+        fo = co / N_C; fr = cr / N_C
+        ax_hc.bar(x_pos[0], fo, width=bw, bottom=bot_o,
+                  color=cc, edgecolor=TEXT, lw=0.4, alpha=0.85, zorder=3)
+        ax_hc.bar(x_pos[1], fr, width=bw, bottom=bot_r,
+                  color=cc, edgecolor=TEXT, lw=0.4, alpha=0.85, zorder=3,
+                  label=label)
+        if fo > 0.03:
+            ax_hc.text(x_pos[0], bot_o + fo/2, f"{fo:.1%}", ha='center', va='center',
+                       fontsize=8, color='white' if fo > 0.10 else TEXT, fontweight='bold')
+        if fr > 0.03:
+            ax_hc.text(x_pos[1], bot_r + fr/2, f"{fr:.1%}", ha='center', va='center',
+                       fontsize=8, color='white' if fr > 0.10 else TEXT, fontweight='bold')
+        bot_o += fo; bot_r += fr
+    ax_hc.set_xticks(x_pos)
+    ax_hc.set_xticklabels(['Orthogonal W', 'Random W'], fontsize=9,
+                          color=TEXT, fontweight='bold')
+    ax_hc.set_ylim(0, 1.12)
+    ax_hc.set_ylabel("Fraction of cells", fontsize=10, color=TEXT)
+    ax_hc.set_title("Cell Usage Breakdown\n(N=131k, 131k cells)",
+                    fontsize=11, color=TEXT, fontweight='bold')
+    ax_hc.tick_params(colors=TEXT, labelsize=8)
+    ax_hc.legend(fontsize=8, framealpha=0.35, labelcolor=TEXT,
+                 loc='upper right', bbox_to_anchor=(1.0, 0.46))
+    ax_hc.grid(axis='y', alpha=0.12, ls='--')
 
-    # ── MI heatmap: Orthogonal ───────────────────────────────────────────────
-    im1 = ax_mi_orth.imshow(mi_orth, cmap='YlOrRd', vmin=0, vmax=0.05,
-                             interpolation='nearest', aspect='auto')
-    fig.colorbar(im1, ax=ax_mi_orth, fraction=0.046, pad=0.04).ax.tick_params(
-        colors=TEXT, labelsize=8)
-    ax_mi_orth.set_title("Orthogonal W\nPairwise Mutual Information",
-                          fontsize=11, color=TEXT, fontweight='bold')
-    ax_mi_orth.set_xlabel("Bit index", fontsize=10, color=TEXT)
-    ax_mi_orth.set_ylabel("Bit index", fontsize=10, color=TEXT)
-    ax_mi_orth.tick_params(colors=TEXT, labelsize=8)
-    off_mask = ~np.eye(k, dtype=bool)
-    ax_mi_orth.text(0.98, 0.02,
-                    f"off-diag MI\nmean={mi_orth[off_mask].mean():.5f}",
-                    transform=ax_mi_orth.transAxes, fontsize=8.5, color=TEXT,
-                    ha='right', va='bottom', fontfamily='monospace',
-                    bbox=dict(boxstyle='round,pad=0.3',
-                              facecolor='#2A2A4A' if dark else '#EEF4FF',
-                              edgecolor=C_ORTH, alpha=0.9))
+    # ── Panel 4: Valid Code Rate vs N ─────────────────────────────────────────
+    ax_vcr.semilogx(N_theory, vcr_theory, '--', color=GOLD, lw=1.5,
+                    label='Poisson ideal', zorder=2)
+    ax_vcr.semilogx(N_vals, vcr_o, 'o-', color=C_ORTH, lw=2.2, ms=6,
+                    label='Orthogonal W', zorder=4)
+    ax_vcr.semilogx(N_vals, vcr_r, 's-', color=C_RAND, lw=2.2, ms=6,
+                    label='Random W', zorder=4)
+    ax_vcr.axvline(N_cells_v, color=SPINE, lw=1.0, ls=':', alpha=0.7)
+    ax_vcr.text(N_cells_v * 1.15, 0.04,
+                f'N=2^{k_v}\n(λ=1)', fontsize=8, color=SUB, va='bottom')
+    ax_vcr.set_xlabel("Number of actions N  (log scale)", fontsize=10, color=TEXT)
+    ax_vcr.set_ylabel("Valid Code Rate\n(fraction of cells occupied)", fontsize=10, color=TEXT)
+    ax_vcr.set_title(f"Valid Code Rate vs N\n(k={k_v} bits, d={d_v}, {N_cells_v:,} cells)",
+                     fontsize=11, color=TEXT, fontweight='bold')
+    ax_vcr.tick_params(colors=TEXT, labelsize=8)
+    ax_vcr.grid(alpha=0.15, ls='--')
+    ax_vcr.set_ylim(0, 1.05)
+    ax_vcr.legend(fontsize=8.5, framealpha=0.35, labelcolor=TEXT)
 
-    # ── MI heatmap: Random ───────────────────────────────────────────────────
-    im2 = ax_mi_rand.imshow(mi_rand, cmap='YlOrRd', vmin=0, vmax=0.05,
-                             interpolation='nearest', aspect='auto')
-    fig.colorbar(im2, ax=ax_mi_rand, fraction=0.046, pad=0.04).ax.tick_params(
-        colors=TEXT, labelsize=8)
-    ax_mi_rand.set_title("Random W\nPairwise Mutual Information",
-                          fontsize=11, color=TEXT, fontweight='bold')
-    ax_mi_rand.set_xlabel("Bit index", fontsize=10, color=TEXT)
-    ax_mi_rand.set_ylabel("Bit index", fontsize=10, color=TEXT)
-    ax_mi_rand.tick_params(colors=TEXT, labelsize=8)
-    ax_mi_rand.text(0.98, 0.02,
-                    f"off-diag MI\nmean={mi_rand[off_mask].mean():.5f}",
-                    transform=ax_mi_rand.transAxes, fontsize=8.5, color=TEXT,
-                    ha='right', va='bottom', fontfamily='monospace',
-                    bbox=dict(boxstyle='round,pad=0.3',
-                              facecolor='#2A2A4A' if dark else '#EEF4FF',
-                              edgecolor=C_RAND, alpha=0.9))
+    # ── Panel 5: Codebook Alignment vs d ──────────────────────────────────────
+    ax_aln.plot(d_list, aln_theory, '--', color=GOLD, lw=1.5,
+                label=r'$\sqrt{2/\pi d}$ (theory)', zorder=2)
+    ax_aln.plot(d_list, aln_o, 'o-', color=C_ORTH, lw=2.2, ms=6,
+                label='Orthogonal W', zorder=4)
+    ax_aln.plot(d_list, aln_r, 's-', color=C_RAND, lw=2.2, ms=6,
+                label='Random W', zorder=4)
+    ax_aln.set_yscale('log')
+    ax_aln.set_xscale('log')
+    ax_aln.set_xticks(d_list)
+    ax_aln.get_xaxis().set_major_formatter(mticker.ScalarFormatter())
+    ax_aln.set_xlabel("Embedding dimension d  (log scale)", fontsize=10, color=TEXT)
+    ax_aln.set_ylabel(r"Mean |off-diagonal| of $WW^\top$" + "\n(lower = better alignment)",
+                      fontsize=10, color=TEXT)
+    ax_aln.set_title(f"Codebook Alignment vs d\n(k={k_a} bits fixed)",
+                     fontsize=11, color=TEXT, fontweight='bold')
+    ax_aln.tick_params(colors=TEXT, labelsize=8)
+    ax_aln.grid(alpha=0.15, ls='--')
+    ax_aln.legend(fontsize=8.5, framealpha=0.35, labelcolor=TEXT)
 
-    # ── Summary text ─────────────────────────────────────────────────────────
-    ax_summary.axis('off')
-    lines = [
-        ("Bit Independence Summary", 11, True),
-        ("-" * 30, 9, False),
-        ("", 0, False),
-        ("Orthogonal W:", 10, True),
-        (f"  P(bit=1) mean  = {p_orth.mean():.4f}", 9, False),
-        (f"  P(bit=1) std   = {p_orth.std():.5f}", 9, False),
-        (f"  Entropy mean   = {h_orth.mean():.6f} bits", 9, False),
-        (f"  Max entropy    = 1.000000 bits", 9, False),
-        (f"  MI (off-diag)  = {mi_orth[off_mask].mean():.6f}", 9, False),
-        ("", 0, False),
-        ("Random W:", 10, True),
-        (f"  P(bit=1) mean  = {p_rand.mean():.4f}", 9, False),
-        (f"  P(bit=1) std   = {p_rand.std():.5f}", 9, False),
-        (f"  Entropy mean   = {h_rand.mean():.6f} bits", 9, False),
-        (f"  MI (off-diag)  = {mi_rand[off_mask].mean():.6f}", 9, False),
-        ("", 0, False),
-        ("Interpretation:", 10, True),
-        ("  Each orthogonal bit achieves", 9, False),
-        ("  maximum entropy (=1 bit) and", 9, False),
-        ("  near-zero MI with all others.", 9, False),
-        ("  => Zero information redundancy.", 9, False),
-    ]
-    from matplotlib.patches import FancyBboxPatch
+    # ── Panel 6: Summary box ──────────────────────────────────────────────────
+    ax_sum.axis('off')
     box = FancyBboxPatch((0.02, 0.02), 0.96, 0.96,
                          boxstyle="round,pad=0.02", linewidth=1.5,
-                         edgecolor=C_ORTH,
-                         facecolor='#2A2A4A' if dark else '#EEF4FF',
-                         transform=ax_summary.transAxes, zorder=0)
-    ax_summary.add_patch(box)
-    y = 0.95
-    lh = 0.043
-    for text, fsize, bold in lines:
-        if fsize == 0:
-            y -= lh * 0.5; continue
-        ax_summary.text(0.07, y, text, transform=ax_summary.transAxes,
-                        fontsize=fsize, color=TEXT, va='top', ha='left',
-                        fontfamily='monospace',
-                        fontweight='bold' if bold else 'normal')
-        y -= lh
+                         edgecolor=C_ORTH, facecolor=BOX_BG,
+                         transform=ax_sum.transAxes, zorder=0)
+    ax_sum.add_patch(box)
 
-    fig.suptitle("Bit Independence & Entropy Analysis",
-                 fontsize=14, fontweight='bold', color=TEXT, y=1.01)
-    fig.text(0.5, -0.01,
-             r"Ideal: $P(\mathrm{bit}_i=1)=0.5$, $H(\mathrm{bit}_i)=1$ bit, $\mathrm{MI}(\mathrm{bit}_i, \mathrm{bit}_j)=0$  for all $i \neq j$",
-             ha='center', fontsize=10, color=SUB, style='italic')
+    idx_Nk   = N_vals.index(N_cells_v)
+    idx_d32  = d_list.index(32)
+    delta_vr = st_o['valid_rate'] - st_r['valid_rate']
+    lines = [
+        ("Geometric Summary", 10, True),
+        ("-" * 22, 8, False),
+        ("", 0, False),
+        ("Collision (k=17, d=32):", 9, True),
+        (f"  Orth valid: {st_o['valid_rate']:.1%}", 8, False),
+        (f"  Rand valid: {st_r['valid_rate']:.1%}", 8, False),
+        (f"  Delta:      {delta_vr:+.1%}", 8, False),
+        ("", 0, False),
+        (f"Code Rate at N=2^{k_v} (d={d_v}):", 9, True),
+        (f"  Orth:  {vcr_o[idx_Nk]:.3f}", 8, False),
+        (f"  Rand:  {vcr_r[idx_Nk]:.3f}", 8, False),
+        (f"  Ideal: ~0.632 (Poisson)", 8, False),
+        ("", 0, False),
+        (f"Alignment d=32, k={k_a}:", 9, True),
+        (f"  Orth: {aln_o[idx_d32]:.2e}", 8, False),
+        (f"  Rand: {aln_r[idx_d32]:.4f}", 8, False),
+        ("", 0, False),
+        ("Key insight:", 9, True),
+        ("  Orth W achieves near-", 8, False),
+        ("  Poisson hashing AND", 8, False),
+        ("  zero off-diag overlap", 8, False),
+        ("  across all N and d.", 8, False),
+        ("", 0, False),
+        ("  Random W converges", 8, False),
+        ("  slowly as d grows.", 8, False),
+    ]
+    yp = 0.97; lh = 0.038
+    for txt, fsize, bold in lines:
+        if fsize == 0:
+            yp -= lh * 0.4; continue
+        ax_sum.text(0.06, yp, txt, transform=ax_sum.transAxes,
+                    fontsize=fsize, color=TEXT, va='top', ha='left',
+                    fontfamily='monospace',
+                    fontweight='bold' if bold else 'normal')
+        yp -= lh
+
+    # ── Titles ────────────────────────────────────────────────────────────────
+    fig.suptitle(
+        "Codebook Geometric Analysis: "
+        "Collision Distribution  |  Valid Code Rate vs N  |  Alignment vs d",
+        fontsize=13, fontweight='bold', color=TEXT, y=1.01)
+    fig.text(
+        0.5, -0.01,
+        r"Row 1: Hash collision (k=17, d=32, $N=2^{17}$ actions $\to 2^{17}$ cells)  "
+        r"$|$  Row 2: Collective codebook performance curves",
+        ha='center', fontsize=9.5, color=SUB, style='italic')
 
     plt.tight_layout()
-    out = os.path.join(OUT_DIR, f"fig2_bit_entropy{suffix}.png")
+    out = os.path.join(OUT_DIR, f"fig2_collision{suffix}.png")
     fig.savefig(out, dpi=200, bbox_inches='tight', facecolor=FIG_FACE)
     plt.close(fig)
     print(f"[SAVED] {out}")
