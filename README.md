@@ -491,6 +491,62 @@ $$
 
 ---
 
+## 기존 O(log N) 방법들과 무엇이 다른가?
+
+리뷰어가 가장 먼저 가질 수 있는 오해는 다음과 같습니다.
+
+- "이거 그냥 LSH 같은 hashing 아니야?"
+- "Hierarchical Softmax처럼 트리 타는 방식이랑 본질적으로 같은 거 아니야?"
+- "Product Quantization이나 vector quantization 계열의 재포장 아닌가?"
+
+이 질문은 반드시 선제적으로 막아야 합니다. GVLA-Net은 표면적으로는 모두 "sub-linear" 또는 "공간 분할"이라는 공통점을 가지지만, **목적 함수와 실패 모드, 그리고 모델 안에서의 역할**이 다릅니다.
+
+### 1. LSH / Binary Hashing과의 차이
+
+겉으로 보기에는 GVLA-Net도 이진 코드를 사용하므로 hashing과 비슷해 보일 수 있습니다. 그러나 기존 LSH 계열은 대체로 **이미 저장된 대규모 데이터베이스에서 근사 최근접 이웃을 검색하는 retrieval 시스템**입니다. 즉, 핵심은 "저장된 후보들 중 무엇이 가장 비슷한가"를 빠르게 찾는 데 있습니다.
+
+반면 GVLA-Net의 목적은 retrieval이 아니라 **decoding**입니다. 우리는 메모리에 거대한 action database를 들고 근사 탐색을 수행하는 것이 아니라, 잠재 상태를 직교 기저에 투영해 **행동 코드 자체를 직접 생성**합니다. 이때 관심 대상은 ANN recall이 아니라, 주어진 latent state로부터 얼마나 안정적으로 action code를 만들어낼 수 있는가입니다.
+
+보다 정확히 말하면:
+
+- LSH: 저장된 후보 집합에 대한 **근사 검색**
+- GVLA-Net: latent-to-action mapping을 위한 **단발성(single-shot) 디코딩**
+
+따라서 GVLA-Net은 "hash를 이용한 retrieval module"이라기보다, **LLM/VLA의 action head를 대체하는 decoding architecture**로 이해하는 것이 맞습니다.
+
+### 2. Hierarchical Softmax / Tree Routing과의 차이
+
+Hierarchical Softmax 역시 $O(\log N)$ 복잡도를 갖기 때문에, 리뷰어는 자연스럽게 "결국 트리 기반 selection과 같은 것 아닌가?"라고 생각할 수 있습니다. 그러나 여기에는 중요한 차이가 있습니다.
+
+기존 tree routing은 보통 **경로 의존적(path-dependent)** 입니다. 상위 노드에서 잘못된 분기가 일어나면, 그 아래 하위 노드가 아무리 잘 동작해도 최종 선택은 이미 잘못된 경로 위에서 이루어집니다. 즉, 구조적으로 **연쇄적 오류 누적(sequential error accumulation)** 가능성이 존재합니다.
+
+반면 GVLA-Net은 명시적인 트리 순회를 하지 않습니다. $k$개의 비트 결정은 상하위 노드 구조를 따라 순차적으로 생성되는 것이 아니라, **하나의 기하학적 투영으로부터 병렬적으로 얻어지는 이진 질문들**로 해석됩니다. 이 말은 곧:
+
+- 명시적인 parent-child routing dependency가 없고
+- 특정 상위 분기 오류가 이후 모든 결정을 잠그는 구조가 아니며
+- GPU 병렬 연산과 더 잘 맞는다는 뜻입니다
+
+물론 비트 예측 자체의 오류 가능성이 사라지는 것은 아닙니다. 다만 GVLA-Net의 오류는 "잘못된 상위 노드 하나가 전체 경로를 망치는 트리 오류"와는 구조가 다릅니다. 이 차이를 분명히 적어야 합니다.
+
+### 3. Product Quantization / K-means류 압축 기법과의 차이
+
+PQ나 vector quantization 계열은 보통 **이미 계산된 feature를 더 작게 저장하거나 더 빠르게 검색하기 위한 후처리 압축 기법**으로 사용됩니다. 즉, 주 관심사는 representation storage와 memory reduction입니다.
+
+GVLA-Net은 여기서도 목적이 다릅니다. 우리는 완성된 feature를 사후적으로 압축하는 것이 아니라, **VLA의 최종 action selection head 자체를 다시 설계**합니다. 다시 말해:
+
+- PQ: feature compression 또는 ANN acceleration을 위한 post-processing
+- GVLA-Net: $O(N)$ action decoding bottleneck 자체를 제거하기 위한 end-to-end head redesign
+
+이 차이는 매우 중요합니다. GVLA-Net은 단순 압축기가 아니라, **언어-시각 백본이 만든 latent state를 초고해상도 행동 공간으로 즉시 사상하는 새로운 action decoding 구조**입니다.
+
+### 한 줄 요약
+
+따라서 GVLA-Net은 기존의 sub-linear 방법들과 완전히 무관하다고 주장하는 것이 아니라, **표면적으로는 유사한 계산 스케일링을 공유하지만, retrieval도 아니고 tree traversal도 아니며, 단순 post-hoc compression도 아닌 "single-shot geometric decoding head"** 라고 설명하는 것이 가장 정확합니다.
+
+이 framing이 중요합니다. 리뷰어에게 전달해야 할 핵심은 "GVLA-Net은 고전적 O(log N) 기법을 그대로 가져다 붙인 것이 아니라, LLM-native VLA의 action bottleneck을 겨냥해 decoding 구조 자체를 다시 설계한 방법"이라는 점입니다.
+
+---
+
 ## 왜 중요한가?
 
 로보틱스 분야의 오랜 통념은 이랬습니다: **"정밀한 행동 공간(큰 N) = 느린 추론 = 실시간 불가"**. GVLA-Net은 이 전제를 근본부터 깨뜨립니다.
