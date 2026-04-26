@@ -253,7 +253,38 @@ python experiments/export_neurips_table.py    # 논문용 테이블 생성
 
 ---
 
-## 부록 A. FLOPs 감소 시각화
+## 부록 A. 기하학적 검증 시각화 (Geometric Validation Figures)
+
+> 모든 그림은 논문 제출용 흰색 배경 버전(`_paper.png`)과 프레젠테이션용 다크 버전 두 가지로 생성됩니다.
+> 재생성: `python experiments/visualize_geometry.py`
+
+### Figure 1 — Weight Orthogonality Heatmap (WW^T)
+
+![Fig1 Heatmap](experiments/results/figures/fig1_orthogonality_heatmap_paper.png)
+
+직교 W는 WW^T = I (완벽한 단위 행렬), 랜덤 W는 비대각 노이즈가 가득. **off-diag std = 0.0000 vs 0.0904**.
+
+### Figure 2 — Bit Independence & Entropy Analysis
+
+![Fig2 Entropy](experiments/results/figures/fig2_bit_entropy_paper.png)
+
+직교 W: 모든 비트의 엔트로피 = **0.999984 bits** (이론적 최대 1.0), 쌍별 MI = **0.000016**. 각 비트가 완전히 독립적인 새 정보를 담는다는 수학적 증명.
+
+### Figure 3 — 3D Latent Space Partitioning
+
+![Fig3 Partitioning](experiments/results/figures/fig3_latent_partitioning_paper.png)
+
+k개의 직교 초평면이 잠재 공간을 2^k개의 셀로 분할. k=20으로 100만 개(sub-mm 정밀도) 행동 공간을 구성.
+
+### Figure 4 — Correlation Sensitivity Sweep ("The Melting Space")
+
+![Fig4 Sweep](experiments/results/figures/fig4_correlation_sweep_paper.png)
+
+ρ=0 (완벽 직교) → ρ=1 (완전 평행)으로 변하며 유효 코드 수가 지수적으로 붕괴. **ρ>0.6 이후 Collapse Zone**. Random W는 ρ≈0.15에 위치.
+
+---
+
+## 부록 B. FLOPs 감소 시각화
 
 > 모델별 GVLA 헤드 교체 시 FLOPs 감소 배율 (행동 공간 크기별)
 
