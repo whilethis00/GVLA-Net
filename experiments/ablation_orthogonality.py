@@ -134,206 +134,228 @@ with open(csv_path, "w", newline="") as f:
 print(f"\n[SAVED CSV] {csv_path}")
 
 
-# ── Figure ────────────────────────────────────────────────────────────────────
-plt.style.use('dark_background')
-FIG_FACE = '#0E0E0E'
-AX_FACE  = '#1A1A2E'
-TEXT     = '#FFFFFF'
-SUB      = '#AAAAAA'
-
-COLORS = {
-    "Orthogonal W": "#4ECDC4",
-    "Random W":     "#FF6B6B",
-}
-MARKERS = {
-    "Orthogonal W": "o",
-    "Random W":     "^",
-}
-
-fig = plt.figure(figsize=(16, 10))
-fig.patch.set_facecolor(FIG_FACE)
-gs = gridspec.GridSpec(2, 3, figure=fig, hspace=0.40, wspace=0.35)
-ax_uniq = fig.add_subplot(gs[0, 0])
-ax_marg = fig.add_subplot(gs[0, 1])
-ax_acc  = fig.add_subplot(gs[0, 2])
-ax_2d_orth = fig.add_subplot(gs[1, 0])
-ax_2d_rand = fig.add_subplot(gs[1, 1])
-ax_text    = fig.add_subplot(gs[1, 2])
-
-for ax in [ax_uniq, ax_marg, ax_acc, ax_2d_orth, ax_2d_rand, ax_text]:
-    ax.set_facecolor(AX_FACE)
-    for spine in ax.spines.values():
-        spine.set_edgecolor('#444444')
-
-def style_ax(ax):
-    ax.tick_params(colors=TEXT, labelsize=9)
-    ax.grid(color='#FFFFFF', alpha=0.12, linestyle='--', linewidth=0.5)
-    ax.set_axisbelow(True)
-
-
-# ── Panel 1: Unique code rate ─────────────────────────────────────────────────
-for method in METHODS:
-    rows = [r for r in results if r["method"] == method]
-    xs = [r["N"] for r in rows]
-    ys = [r["unique_code_rate"] for r in rows]
-    ax_uniq.plot(xs, ys, color=COLORS[method], marker=MARKERS[method],
-                 linewidth=2.2, markersize=7, label=method)
-ax_uniq.set_xscale('log')
-ax_uniq.set_xlabel("N", fontsize=11, color=TEXT)
-ax_uniq.set_ylabel("Unique Code Rate", fontsize=11, color=TEXT)
-ax_uniq.set_title("Hash Collision Rate\n(Higher = Better)", fontsize=11, color=TEXT, fontweight='bold')
-ax_uniq.set_ylim(0, 1.15)
-ax_uniq.axhline(1.0, color='#FFD700', lw=1.0, ls='--', alpha=0.6)
-ax_uniq.legend(fontsize=9, framealpha=0.3, edgecolor='#888888', labelcolor=TEXT)
-style_ax(ax_uniq)
-
-# ── Panel 2: Mean margin ──────────────────────────────────────────────────────
-for method in METHODS:
-    rows = [r for r in results if r["method"] == method]
-    xs = [r["N"] for r in rows]
-    ys = [r["mean_margin"] for r in rows]
-    ax_marg.plot(xs, ys, color=COLORS[method], marker=MARKERS[method],
-                 linewidth=2.2, markersize=7, label=method)
-ax_marg.set_xscale('log')
-ax_marg.set_xlabel("N", fontsize=11, color=TEXT)
-ax_marg.set_ylabel("Mean Min-Projection Margin", fontsize=11, color=TEXT)
-ax_marg.set_title("Hyperplane Margin\n(Higher = More Noise-Robust)", fontsize=11, color=TEXT, fontweight='bold')
-ax_marg.legend(fontsize=9, framealpha=0.3, edgecolor='#888888', labelcolor=TEXT)
-style_ax(ax_marg)
-
-# ── Panel 3: Noise accuracy ───────────────────────────────────────────────────
-for method in METHODS:
-    rows = [r for r in results if r["method"] == method]
-    xs = [r["N"] for r in rows]
-    ys = [r["noise_accuracy"] for r in rows]
-    ax_acc.plot(xs, ys, color=COLORS[method], marker=MARKERS[method],
-                linewidth=2.2, markersize=7, label=method)
-ax_acc.set_xscale('log')
-ax_acc.set_xlabel("N", fontsize=11, color=TEXT)
-ax_acc.set_ylabel(f"Accuracy Under Noise (σ={NOISE_SIGMA})", fontsize=11, color=TEXT)
-ax_acc.set_title("Noise-Robust Retrieval\n(Higher = Better)", fontsize=11, color=TEXT, fontweight='bold')
-ax_acc.set_ylim(-0.05, 1.10)
-ax_acc.legend(fontsize=9, framealpha=0.3, edgecolor='#888888', labelcolor=TEXT)
-style_ax(ax_acc)
-
-
-# ── 2D Intuition Panels ───────────────────────────────────────────────────────
+# ── 2D geometry helpers (shared) ─────────────────────────────────────────────
 torch.manual_seed(7)
 np.random.seed(7)
-
 n_pts = 400
-pts = torch.randn(n_pts, 2)
+pts_2d = torch.randn(n_pts, 2)
 
-def make_2d_W_orth():
-    W = torch.tensor([[1.0, 0.0], [0.0, 1.0]])  # axis-aligned orthogonal
-    return W
+W_2d_orth = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
+W_2d_rand = torch.tensor([[1.0, 0.3], [0.9, 0.2]])
+W_2d_rand = W_2d_rand / W_2d_rand.norm(dim=1, keepdim=True)
 
-def make_2d_W_rand():
-    # Two correlated hyperplanes (nearly parallel → wastes a bit)
-    W = torch.tensor([[1.0, 0.3], [0.9, 0.2]])
-    W = W / (W.norm(dim=1, keepdim=True))
-    return W
+QUAD_EDGE = {
+    (0, 0): '#E05C5C',   # red-ish
+    (0, 1): '#2AADA6',   # teal
+    (1, 0): '#D4A017',   # gold
+    (1, 1): '#5FAD79',   # green
+}
+MARKERS = {"Orthogonal W": "o", "Random W": "^"}
 
-def plot_2d_partition(ax, W, pts, title):
-    codes = (torch.sign(pts @ W.T) > 0).int()  # (N, 2) ∈ {0,1}
-    quad_colors = {
-        (0,0): '#FF6B6B40', (0,1): '#4ECDC440',
-        (1,0): '#FFD70040', (1,1): '#96CEB440',
-    }
-    quad_edge = {
-        (0,0): '#FF6B6B', (0,1): '#4ECDC4',
-        (1,0): '#FFD700', (1,1): '#96CEB4',
-    }
-    for i, (p, c) in enumerate(zip(pts, codes)):
-        key = (c[0].item(), c[1].item())
-        col = quad_edge[key]
-        ax.scatter(p[0].item(), p[1].item(), color=col, s=12, alpha=0.55, zorder=2)
 
-    lim = 3.5
-    # Draw hyperplane lines
-    t = torch.linspace(-lim, lim, 100)
-    for j in range(2):
-        w = W[j]
-        # Line: w[0]*x + w[1]*y = 0  →  y = -w[0]/w[1]*x
-        if abs(w[1].item()) > 1e-4:
-            slope = -w[0].item() / w[1].item()
-            y_line = slope * t
-            mask = (y_line >= -lim) & (y_line <= lim)
-            ax.plot(t[mask].numpy(), y_line[mask].numpy(),
-                    color='#FFFFFF', lw=1.8, zorder=4,
-                    label=f'Hyperplane {j+1}')
-        else:
-            ax.axvline(0, color='#FFFFFF', lw=1.8, zorder=4)
+# ── Figure renderer ───────────────────────────────────────────────────────────
+def render_figure(dark: bool) -> None:
+    if dark:
+        plt.style.use('dark_background')
+        FIG_FACE    = '#0E0E0E'
+        AX_FACE     = '#1A1A2E'
+        TEXT        = '#FFFFFF'
+        SUB         = '#AAAAAA'
+        SPINE       = '#444444'
+        GRID_COL    = '#FFFFFF'
+        GRID_ALPHA  = 0.12
+        LINE_ORTH   = '#4ECDC4'
+        LINE_RAND   = '#FF6B6B'
+        BASELINE    = '#FFD700'
+        HPLANE_COL  = '#FFFFFF'
+        ANNOT_COL   = '#FFD700'
+        BOX_FACE    = '#2A2A4A'
+        BOX_EDGE    = '#4ECDC4'
+        out_name    = "ablation_orthogonality.png"
+    else:
+        plt.rcdefaults()
+        FIG_FACE    = '#FFFFFF'
+        AX_FACE     = '#FFFFFF'
+        TEXT        = '#111111'
+        SUB         = '#555555'
+        SPINE       = '#AAAAAA'
+        GRID_COL    = '#333333'
+        GRID_ALPHA  = 0.18
+        LINE_ORTH   = '#1A9E94'   # darker teal, readable on white
+        LINE_RAND   = '#C0392B'   # darker red, readable on white
+        BASELINE    = '#B07D00'   # dark gold
+        HPLANE_COL  = '#222222'
+        ANNOT_COL   = '#333333'
+        BOX_FACE    = '#F0F8FF'   # alice blue
+        BOX_EDGE    = '#1A9E94'
+        out_name    = "ablation_orthogonality_paper.png"
 
-    ax.set_xlim(-lim, lim)
-    ax.set_ylim(-lim, lim)
-    ax.set_aspect('equal')
-    ax.set_title(title, fontsize=11, color=TEXT, fontweight='bold')
-    ax.tick_params(colors=TEXT, labelsize=8)
+    COLORS = {"Orthogonal W": LINE_ORTH, "Random W": LINE_RAND}
 
-    # Count unique codes
-    code_tuples = [tuple(c.tolist()) for c in codes]
-    n_unique = len(set(code_tuples))
-    coverage = n_unique / 4  # 2^2 = 4 possible
-    ax.text(0.02, 0.02, f"{n_unique}/4 quadrants used\n({int(coverage*100)}% coverage)",
-            transform=ax.transAxes, fontsize=8.5, color='#FFD700',
-            va='bottom', fontweight='bold')
+    def style_ax(ax):
+        ax.tick_params(colors=TEXT, labelsize=9)
+        ax.grid(color=GRID_COL, alpha=GRID_ALPHA, linestyle='--', linewidth=0.5)
+        ax.set_axisbelow(True)
+        for spine in ax.spines.values():
+            spine.set_edgecolor(SPINE)
 
-W_2d_orth = make_2d_W_orth()
-W_2d_rand = make_2d_W_rand()
+    def plot_2d_partition(ax, W, pts, title):
+        codes = (torch.sign(pts @ W.T) > 0).int()
+        for p, c in zip(pts, codes):
+            key = (c[0].item(), c[1].item())
+            ax.scatter(p[0].item(), p[1].item(),
+                       color=QUAD_EDGE[key], s=12, alpha=0.60, zorder=2)
+        lim = 3.5
+        t = torch.linspace(-lim, lim, 100)
+        for j in range(2):
+            w = W[j]
+            if abs(w[1].item()) > 1e-4:
+                slope = -w[0].item() / w[1].item()
+                y_line = slope * t
+                mask = (y_line >= -lim) & (y_line <= lim)
+                ax.plot(t[mask].numpy(), y_line[mask].numpy(),
+                        color=HPLANE_COL, lw=2.0, zorder=4)
+            else:
+                ax.axvline(0, color=HPLANE_COL, lw=2.0, zorder=4)
+        ax.set_xlim(-lim, lim)
+        ax.set_ylim(-lim, lim)
+        ax.set_aspect('equal')
+        ax.set_title(title, fontsize=11, color=TEXT, fontweight='bold')
+        ax.tick_params(colors=TEXT, labelsize=8)
+        code_tuples = [tuple(c.tolist()) for c in codes]
+        n_unique = len(set(code_tuples))
+        ax.text(0.03, 0.03, f"{n_unique}/4 quadrants used\n({n_unique * 25}% coverage)",
+                transform=ax.transAxes, fontsize=8.5,
+                color=ANNOT_COL, va='bottom', fontweight='bold')
 
-plot_2d_partition(ax_2d_orth, W_2d_orth, pts,
-                  "Orthogonal W\n(Axis-aligned: 4/4 quadrants used)")
-plot_2d_partition(ax_2d_rand, W_2d_rand, pts,
-                  "Correlated W\n(Nearly parallel: fewer quadrants)")
+    # Build figure
+    fig = plt.figure(figsize=(16, 10))
+    fig.patch.set_facecolor(FIG_FACE)
+    gs = gridspec.GridSpec(2, 3, figure=fig, hspace=0.42, wspace=0.35)
+    ax_uniq    = fig.add_subplot(gs[0, 0])
+    ax_marg    = fig.add_subplot(gs[0, 1])
+    ax_acc     = fig.add_subplot(gs[0, 2])
+    ax_2d_orth = fig.add_subplot(gs[1, 0])
+    ax_2d_rand = fig.add_subplot(gs[1, 1])
+    ax_text    = fig.add_subplot(gs[1, 2])
 
-for ax in [ax_2d_orth, ax_2d_rand]:
-    ax.set_facecolor(AX_FACE)
-    for spine in ax.spines.values():
-        spine.set_edgecolor('#444444')
+    for ax in [ax_uniq, ax_marg, ax_acc, ax_2d_orth, ax_2d_rand, ax_text]:
+        ax.set_facecolor(AX_FACE)
 
-# ── Text panel: Key Insight ───────────────────────────────────────────────────
-ax_text.axis('off')
-insight = (
-    "Key Insight\n"
-    "─────────────────────────\n\n"
-    "Orthogonal W\n"
-    "  • Hyperplanes ⊥ each other\n"
-    "  • Each bit = fully new info\n"
-    "  • Max unique codes = 2^k\n"
-    "  • High noise margin\n"
-    "  • ||WW^T - I||_F = 0\n\n"
-    "Random W\n"
-    "  • Hyperplanes may be correlated\n"
-    "  • Bits encode overlapping info\n"
-    "  • Fewer unique codes (collisions)\n"
-    "  • Lower noise margin\n"
-    "  • ||WW^T - I||_F > 0\n\n"
-    "Analogy:\n"
-    "  Orthogonal measurement\n"
-    "  in quantum mechanics:\n"
-    "  each axis gives a\n"
-    "  completely independent\n"
-    "  1-bit answer → zero\n"
-    "  information redundancy."
-)
-ax_text.text(0.05, 0.97, insight, transform=ax_text.transAxes,
-             fontsize=9.5, color=TEXT, va='top', ha='left',
-             fontfamily='monospace',
-             bbox=dict(boxstyle='round,pad=0.6', facecolor='#2A2A4A',
-                       edgecolor='#4ECDC4', linewidth=1.5))
+    # Panel 1: Unique code rate
+    for method in METHODS:
+        rows = [r for r in results if r["method"] == method]
+        ax_uniq.plot([r["N"] for r in rows], [r["unique_code_rate"] for r in rows],
+                     color=COLORS[method], marker=MARKERS[method],
+                     linewidth=2.2, markersize=7, label=method)
+    ax_uniq.set_xscale('log')
+    ax_uniq.set_xlabel("N", fontsize=11, color=TEXT)
+    ax_uniq.set_ylabel("Unique Code Rate", fontsize=11, color=TEXT)
+    ax_uniq.set_title("Hash Collision Rate\n(Higher = Better)", fontsize=11, color=TEXT, fontweight='bold')
+    ax_uniq.set_ylim(0, 1.15)
+    ax_uniq.axhline(1.0, color=BASELINE, lw=1.0, ls='--', alpha=0.7)
+    ax_uniq.legend(fontsize=9, framealpha=0.35, edgecolor=SPINE, labelcolor=TEXT)
+    style_ax(ax_uniq)
 
-# ── Supertitle ────────────────────────────────────────────────────────────────
-fig.suptitle("Ablation: Why Orthogonality is Non-Negotiable  (d=32)",
-             fontsize=15, fontweight='bold', color=TEXT, y=1.01)
-fig.text(0.5, -0.015,
-         f"Non-orthogonal bases encode redundant information → hash collisions → accuracy drop  |  σ={NOISE_SIGMA}",
-         ha='center', fontsize=10, color=SUB, style='italic')
+    # Panel 2: Mean margin
+    for method in METHODS:
+        rows = [r for r in results if r["method"] == method]
+        ax_marg.plot([r["N"] for r in rows], [r["mean_margin"] for r in rows],
+                     color=COLORS[method], marker=MARKERS[method],
+                     linewidth=2.2, markersize=7, label=method)
+    ax_marg.set_xscale('log')
+    ax_marg.set_xlabel("N", fontsize=11, color=TEXT)
+    ax_marg.set_ylabel("Mean Min-Projection Margin", fontsize=11, color=TEXT)
+    ax_marg.set_title("Hyperplane Margin\n(Higher = More Noise-Robust)", fontsize=11, color=TEXT, fontweight='bold')
+    ax_marg.legend(fontsize=9, framealpha=0.35, edgecolor=SPINE, labelcolor=TEXT)
+    style_ax(ax_marg)
 
-out_path = os.path.join(OUT_DIR, "ablation_orthogonality.png")
-fig.savefig(out_path, dpi=200, bbox_inches='tight', facecolor=fig.get_facecolor())
-plt.close(fig)
-print(f"[SAVED PLOT] {out_path}")
+    # Panel 3: Noise accuracy
+    for method in METHODS:
+        rows = [r for r in results if r["method"] == method]
+        ax_acc.plot([r["N"] for r in rows], [r["noise_accuracy"] for r in rows],
+                    color=COLORS[method], marker=MARKERS[method],
+                    linewidth=2.2, markersize=7, label=method)
+    ax_acc.set_xscale('log')
+    ax_acc.set_xlabel("N", fontsize=11, color=TEXT)
+    ax_acc.set_ylabel(f"Accuracy Under Noise (\u03c3={NOISE_SIGMA})", fontsize=11, color=TEXT)
+    ax_acc.set_title("Noise-Robust Retrieval\n(Higher = Better)", fontsize=11, color=TEXT, fontweight='bold')
+    ax_acc.set_ylim(-0.05, 1.10)
+    ax_acc.legend(fontsize=9, framealpha=0.35, edgecolor=SPINE, labelcolor=TEXT, loc='lower left')
+    style_ax(ax_acc)
+
+    # Panels 4 & 5: 2D partitions
+    plot_2d_partition(ax_2d_orth, W_2d_orth, pts_2d,
+                      "Orthogonal W\n(Axis-aligned: 4/4 quadrants used)")
+    plot_2d_partition(ax_2d_rand, W_2d_rand, pts_2d,
+                      "Correlated W\n(Nearly parallel: fewer quadrants)")
+    for ax in [ax_2d_orth, ax_2d_rand]:
+        style_ax(ax)
+
+    # Panel 6: Key insight text
+    ax_text.axis('off')
+    # Use only ASCII-safe characters to avoid font rendering issues
+    sep = "-" * 24
+    insight_lines = [
+        ("Key Insight", 11, True),
+        (sep, 9, False),
+        ("", 9, False),
+        ("Orthogonal W", 10, True),
+        ("  * Hyperplanes perp. each other", 9, False),
+        ("  * Each bit = fully new info", 9, False),
+        ("  * Max unique codes = 2^k", 9, False),
+        ("  * High noise margin", 9, False),
+        ("  * ||WW^T - I||_F = 0", 9, False),
+        ("", 9, False),
+        ("Random W", 10, True),
+        ("  * Hyperplanes may be correlated", 9, False),
+        ("  * Bits encode overlapping info", 9, False),
+        ("  * Fewer unique codes (collisions)", 9, False),
+        ("  * Lower noise margin", 9, False),
+        ("  * ||WW^T - I||_F > 0", 9, False),
+        ("", 9, False),
+        ("Quantum Analogy:", 9, True),
+        ("  Orthogonal measurement axes", 9, False),
+        ("  each give 1 independent bit", 9, False),
+        ("  => zero information redundancy", 9, False),
+    ]
+    # Draw a rounded rectangle background manually
+    from matplotlib.patches import FancyBboxPatch
+    box = FancyBboxPatch((0.02, 0.02), 0.96, 0.96,
+                         boxstyle="round,pad=0.02",
+                         linewidth=1.5, edgecolor=BOX_EDGE,
+                         facecolor=BOX_FACE, transform=ax_text.transAxes,
+                         zorder=0, clip_on=False)
+    ax_text.add_patch(box)
+    y_cursor = 0.95
+    line_height = 0.044
+    for text, fsize, bold in insight_lines:
+        if text == "":
+            y_cursor -= line_height * 0.5
+            continue
+        ax_text.text(0.07, y_cursor, text,
+                     transform=ax_text.transAxes,
+                     fontsize=fsize, color=TEXT,
+                     va='top', ha='left',
+                     fontfamily='monospace',
+                     fontweight='bold' if bold else 'normal')
+        y_cursor -= line_height
+
+    # Titles
+    fig.suptitle("Ablation: Why Orthogonality is Non-Negotiable  (d=32)",
+                 fontsize=15, fontweight='bold', color=TEXT, y=1.01)
+    fig.text(0.5, -0.015,
+             f"Non-orthogonal bases encode redundant information \u2192 hash collisions \u2192 accuracy drop  |  \u03c3={NOISE_SIGMA}",
+             ha='center', fontsize=10, color=SUB, style='italic')
+
+    out_path = os.path.join(OUT_DIR, out_name)
+    fig.savefig(out_path, dpi=200, bbox_inches='tight', facecolor=fig.get_facecolor())
+    plt.close(fig)
+    print(f"[SAVED] {out_path}")
+
+
+render_figure(dark=True)
+render_figure(dark=False)
 
 # ── Verify ────────────────────────────────────────────────────────────────────
 print("\nFiles in figures/:")
