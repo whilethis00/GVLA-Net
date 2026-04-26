@@ -5,4 +5,8 @@ experiments/results/*
 !experiments/results/universal_vla_comparison/
 experiments/results/universal_vla_comparison/*
 !experiments/results/universal_vla_comparison/README.md
+!experiments/results/figures/
+experiments/results/figures/**
+!experiments/results/figures/*.png
+!experiments/results/figures/*.csv
 **/.git.embedded-backup/
