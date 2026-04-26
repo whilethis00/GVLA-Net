@@ -356,6 +356,38 @@ any correlation among bits reduces effective capacity. Orthogonal projections re
 **2. Geometric viewpoint.**  
 Orthogonal hyperplanes partition latent space into more balanced orthants, so the induced binary codes use the available cells more evenly. When orthogonality is degraded, the partition becomes skewed: some cells grow disproportionately while others collapse, which reduces code utilization and increases collision risk. The consequence is not that every non-orthogonal basis must fail, but that orthogonality gives the most reliable route to logarithmic-capacity scaling.
 
+### Formal Statement
+
+Let $x \in \mathbb{R}^d$ be a latent state with isotropic distribution $x \sim \mathcal{N}(0, I_d)$, and let $W \in \mathbb{R}^{k \times d}$ have orthonormal rows, i.e. $WW^\top = I_k$. Define the binary GVLA code
+
+$$
+b(x) = \operatorname{sign}(Wx) \in \{-1,+1\}^k.
+$$
+
+Then:
+
+1. $Wx \sim \mathcal{N}(0, I_k)$.
+2. The coordinates $(Wx)_1,\dots,(Wx)_k$ are independent centered Gaussians.
+3. Therefore the bits $b_1(x),\dots,b_k(x)$ are i.i.d. Rademacher variables with
+
+$$
+\Pr[b(x)=c] = 2^{-k} \qquad \text{for every } c \in \{-1,+1\}^k.
+$$
+
+Hence the codebook uses all $2^k$ orthants uniformly, the joint entropy is exactly
+
+$$
+H(b)=k,
+$$
+
+and any action set of size $N \le 2^k$ admits an injective assignment into these codes. Equivalently, the minimum number of binary routing decisions needed to distinguish $N$ actions is
+
+$$
+k \ge \lceil \log_2 N \rceil.
+$$
+
+This is the formal sense in which orthogonality supports logarithmic decoding: orthogonality makes the projected coordinates decorrelated under an isotropic latent model, which restores the full $k$ bits of usable routing capacity. Without orthogonality, $WW^\top \neq I_k$, so the projected coordinates become correlated, $H(b) < k$ in general, and the effective number of reliably usable codes drops below $2^k$.
+
 ### 왜 Random W는 실패하는가?
 
 비직교 행렬의 행(hyperplane)들은 서로 방향이 겹칩니다. 두 행의 내적이 0이 아닐 때, 두 질문이 **같은 방향에 대한 정보를 중복으로 묻는** 셈이 됩니다.
