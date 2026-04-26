@@ -276,9 +276,13 @@ def render_latex_table(rows: List[UniversalBenchmarkRow]) -> str:
             "otherwise falls back to a documented proxy. Dense head latency is measured when "
             "the action head fits within the configured VRAM budget and linearly projected "
             "beyond that point; GVLA latency is measured directly because it scales with "
-            "$\\lceil \\log_2 N \\rceil$. Memory reports parameter-state footprint for the "
-            "terminal action-routing head only, isolating the savings unlocked by replacing "
-            "dense routing with orthogonal geometric hashing.}"
+            "$\\lceil \\log_2 N \\rceil$. Verified rows show that the crossover point depends "
+            "on backbone width and native head structure: OpenVLA-7B flips in GVLA's favor by "
+            "$N=2^{15}$, while the real pi0.5 checkpoint tail remains dense-favored until the "
+            "million-action regime and then reaches a 10.94$\\times$ head-latency gain at "
+            "$N=2^{20}$. Memory reports parameter-state footprint for the terminal "
+            "action-routing head only, isolating the savings unlocked by replacing dense "
+            "routing with orthogonal geometric hashing.}"
         ),
         "\\label{tab:sota_vla_comparison}",
         "\\scriptsize",

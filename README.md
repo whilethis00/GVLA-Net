@@ -316,6 +316,46 @@ k개의 직교 초평면이 잠재 공간을 2^k개의 셀로 분할. k=20으로
 
 ![Ablation Orthogonality](experiments/results/figures/ablation_orthogonality.png)
 
+### Formal Statement for Method
+
+**Theorem 1 (Information-Theoretic Lower Bound).**  
+Let a routing mechanism assign a binary code $Y \in \{0,1\}^k$ to each of $N$ candidate actions. If all $N$ actions must be uniquely identified without collision, then
+
+$$
+k \ge \lceil \log_2 N \rceil.
+$$
+
+Equivalently, any collision-free binary routing scheme requires at least $\Omega(\log N)$ binary decisions.
+
+**Proposition 2 (Orthogonality Maximizes Bit Efficiency Under Isotropic Latents).**  
+Let the routing bits be produced by
+
+$$
+Y_i = \mathbf{1}\{\langle w_i, z\rangle \ge 0\}, \qquad i=1,\dots,k,
+$$
+
+where $z \in \mathbb{R}^d$ is a whitened isotropic latent variable and the rows of $W \in \mathbb{R}^{k \times d}$ are unit norm. When the rows of $W$ are mutually orthogonal, the projection bits become decorrelated; under a Gaussian latent model, they are independent when balanced, and therefore
+
+$$
+H(Y) = \sum_{i=1}^{k} H(Y_i) = k.
+$$
+
+This maximizes effective code capacity and minimizes redundancy among the $k$ routing questions.
+
+### Proof Sketch / Interpretation
+
+**1. Entropy viewpoint.**  
+To distinguish $N$ actions without collision, the codebook must contain at least $N$ distinct binary strings, so $2^k \ge N$, which gives $k \ge \lceil \log_2 N \rceil$. In practice, however, the usable capacity is governed by the joint entropy $H(Y)$ rather than the nominal bit count $k$. Since
+
+$$
+H(Y) \le \sum_{i=1}^{k} H(Y_i),
+$$
+
+any correlation among bits reduces effective capacity. Orthogonal projections reduce this redundancy and push $H(Y)$ closer to the ideal $k$-bit limit.
+
+**2. Geometric viewpoint.**  
+Orthogonal hyperplanes partition latent space into more balanced orthants, so the induced binary codes use the available cells more evenly. When orthogonality is degraded, the partition becomes skewed: some cells grow disproportionately while others collapse, which reduces code utilization and increases collision risk. The consequence is not that every non-orthogonal basis must fail, but that orthogonality gives the most reliable route to logarithmic-capacity scaling.
+
 ### 왜 Random W는 실패하는가?
 
 비직교 행렬의 행(hyperplane)들은 서로 방향이 겹칩니다. 두 행의 내적이 0이 아닐 때, 두 질문이 **같은 방향에 대한 정보를 중복으로 묻는** 셈이 됩니다.
