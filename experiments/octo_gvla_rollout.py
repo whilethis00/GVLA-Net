@@ -64,6 +64,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--baseline-bins", type=int, default=256)
     parser.add_argument("--gvla-bins", type=int, default=1 << 20)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--debug-action-steps", type=int, default=0)
+    parser.add_argument(
+        "--independent-seeds",
+        action="store_true",
+        default=False,
+        help=(
+            "Use seed+10000 for GVLA rollouts (independent episodes from baseline). "
+            "Default is False: both policies run on the SAME episodes for fair comparison."
+        ),
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -139,6 +149,15 @@ def sample_action_chunk(
     return np.asarray(actions[0]), rng, infer_ms
 
 
+def summarize_action(action: np.ndarray) -> str:
+    flat = np.asarray(action, dtype=np.float32).reshape(-1)
+    preview = np.array2string(flat[: min(8, len(flat))], precision=4, separator=", ")
+    return (
+        f"shape={tuple(action.shape)}, min={flat.min():.4f}, max={flat.max():.4f}, "
+        f"mean={flat.mean():.4f}, std={flat.std():.4f}, preview={preview}"
+    )
+
+
 def run_policy_rollouts(
     model: OctoModel,
     *,
@@ -147,6 +166,8 @@ def run_policy_rollouts(
     history_horizon: int,
     seed: int,
     action_adapter: Callable[[np.ndarray], np.ndarray],
+    debug_action_steps: int = 0,
+    policy_label: str = "policy",
 ) -> RolloutSummary:
     proprio_dim, image_size, wrist_image_size, action_dim, model_horizon, task_completed_dim = infer_model_metadata(model)
     history_horizon = history_horizon if history_horizon is not None else model_horizon
@@ -177,7 +198,7 @@ def run_policy_rollouts(
 
         for step_idx in range(max_steps):
             obs = augment_observation(obs, task_completed_dim=task_completed_dim)
-            action_chunk, rng, infer_ms = sample_action_chunk(
+            raw_action_chunk, rng, infer_ms = sample_action_chunk(
                 model,
                 obs,
                 task,
@@ -185,8 +206,31 @@ def run_policy_rollouts(
                 action_stats=action_stats,
             )
             infer_times.append(infer_ms)
-            action_chunk = action_adapter(action_chunk)
-            obs, reward, done, trunc, info = env.step(action_chunk)
+            action_chunk = action_adapter(raw_action_chunk)
+            if rollout_idx == 0 and step_idx < debug_action_steps:
+                print(
+                    f"[debug] step={step_idx} raw_action {summarize_action(raw_action_chunk)}"
+                )
+                print(
+                    f"[debug] step={step_idx} adapted_action {summarize_action(action_chunk)}"
+                )
+            # Octo predicts an action chunk with shape (pred_horizon, action_dim).
+            # This lightweight env executes a single control step at a time, so we
+            # consume only the first action in the chunk.
+            env_action = action_chunk[0] if np.asarray(action_chunk).ndim > 1 else action_chunk
+
+            # --- DEBUG START ---
+            if rollout_idx == 0 and step_idx < max(debug_action_steps, 3):
+                ea = np.asarray(env_action, dtype=np.float32).reshape(-1)
+                print(f"=== DEBUG ACTION ===")
+                print(f"Model: {policy_label}")
+                print(f"Action Type: {type(env_action)}, Shape: {ea.shape}")
+                print(f"Action Values (first 8 dims): {ea[:8]}")
+                print(f"Action range: min={ea.min():.4f}  max={ea.max():.4f}")
+                print(f"====================")
+            # --- DEBUG END ---
+
+            obs, reward, done, trunc, info = env.step(env_action)
             episode_return += float(reward)
             last_info = info
             if done or trunc:
@@ -236,16 +280,24 @@ def main() -> None:
         history_horizon=args.history_horizon,
         seed=args.seed,
         action_adapter=coarse_adapter,
+        debug_action_steps=args.debug_action_steps,
+        policy_label=f"octo_coarse_{args.baseline_bins}",
     )
     baseline.policy_name = f"octo_coarse_{args.baseline_bins}"
 
+    # Use the SAME seed as baseline by default so both policies evaluate on
+    # identical episodes (same env init, same model RNG).  Pass
+    # --independent-seeds to revert to the old seed+10000 behaviour.
+    gvla_seed = args.seed + 10_000 if args.independent_seeds else args.seed
     gvla = run_policy_rollouts(
         model,
         rollouts=args.rollouts,
         max_steps=args.max_steps,
         history_horizon=args.history_horizon,
-        seed=args.seed + 10_000,
+        seed=gvla_seed,
         action_adapter=gvla_adapter,
+        debug_action_steps=args.debug_action_steps,
+        policy_label=f"octo_gvla_{args.gvla_bins}",
     )
     gvla.policy_name = f"octo_gvla_{args.gvla_bins}"
 
