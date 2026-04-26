@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import math
 from dataclasses import dataclass
 from typing import Any
@@ -17,8 +19,9 @@ class OctoLightweightReachEnv(gym.Env):
 
     This environment is intentionally simple: a point-effector moves in a 2D plane
     using the first two action dimensions. The observation format always includes
-    `image_primary` and can optionally include `proprio`, which makes it useful as a
-    lightweight integration harness before switching to a heavier simulator.
+    `image_primary` and `image_wrist`, and can optionally include `proprio`, which
+    makes it useful as a lightweight integration harness before switching to a
+    heavier simulator.
     """
 
     metadata = {"render_modes": ["rgb_array"], "render_fps": 20}
@@ -61,6 +64,12 @@ class OctoLightweightReachEnv(gym.Env):
                 shape=(self.image_size, self.image_size, 3),
                 dtype=np.uint8,
             ),
+            "image_wrist": gym.spaces.Box(
+                low=0,
+                high=255,
+                shape=(self.image_size, self.image_size, 3),
+                dtype=np.uint8,
+            ),
         }
         if self.proprio_dim > 0:
             obs_spaces["proprio"] = gym.spaces.Box(
@@ -86,10 +95,17 @@ class OctoLightweightReachEnv(gym.Env):
     def _sample_xy(self) -> np.ndarray:
         return self._rng.uniform(low=-0.8, high=0.8, size=(2,)).astype(np.float32)
 
-    def _render_image(self) -> np.ndarray:
+    def _render_image(self, *, wrist: bool = False) -> np.ndarray:
         image = np.full((self.image_size, self.image_size, 3), 245, dtype=np.uint8)
-        self._draw_disc(image, self._task.target_xy, radius=8, color=(220, 40, 40))
-        self._draw_disc(image, self._state_xy, radius=8, color=(30, 60, 220))
+        target_xy = self._task.target_xy
+        state_xy = self._state_xy
+        if wrist:
+            # Simulate a distinct wrist-view camera with a mirrored x-axis and
+            # slightly compressed y-axis so the model does not see two identical views.
+            target_xy = np.array([-target_xy[0], target_xy[1] * 0.85], dtype=np.float32)
+            state_xy = np.array([-state_xy[0], state_xy[1] * 0.85], dtype=np.float32)
+        self._draw_disc(image, target_xy, radius=8, color=(220, 40, 40))
+        self._draw_disc(image, state_xy, radius=8, color=(30, 60, 220))
         return image
 
     def _draw_disc(
@@ -107,7 +123,10 @@ class OctoLightweightReachEnv(gym.Env):
         image[mask] = color
 
     def _get_obs(self) -> dict[str, np.ndarray]:
-        obs = {"image_primary": self._render_image()}
+        obs = {
+            "image_primary": self._render_image(),
+            "image_wrist": self._render_image(wrist=True),
+        }
         if self.proprio_dim > 0:
             proprio = np.zeros(self.proprio_dim, dtype=np.float32)
             proprio[0:2] = self._state_xy
