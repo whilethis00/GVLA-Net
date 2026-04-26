@@ -60,7 +60,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--rollouts", type=int, default=100)
     parser.add_argument("--max-steps", type=int, default=100)
-    parser.add_argument("--history-horizon", type=int, default=1)
+    parser.add_argument("--history-horizon", type=int, default=None)
     parser.add_argument("--baseline-bins", type=int, default=256)
     parser.add_argument("--gvla-bins", type=int, default=1 << 20)
     parser.add_argument("--seed", type=int, default=0)
@@ -78,25 +78,45 @@ def build_run_dir(output_root: Path, run_name: str) -> Path:
     return output_root / f"{timestamp}_{run_name}"
 
 
-def infer_model_metadata(model: OctoModel) -> tuple[int, int, int]:
+def infer_model_metadata(model: OctoModel) -> tuple[int, int, int, int, int, int]:
     observation_spec = model.example_batch["observation"]
     proprio_spec = observation_spec.get("proprio")
     proprio_dim = int(proprio_spec.shape[-1]) if proprio_spec is not None else 0
 
-    image_key = next((key for key in observation_spec if key.startswith("image_")), None)
-    if image_key is None:
+    primary_spec = observation_spec.get("image_primary")
+    wrist_spec = observation_spec.get("image_wrist")
+    if primary_spec is None:
         raise KeyError(
-            f"Could not find an image observation key in example_batch['observation']; "
+            f"Could not find 'image_primary' in example_batch['observation']; "
             f"available keys: {sorted(observation_spec.keys())}"
         )
-
-    image_shape = observation_spec[image_key].shape
-    image_size = int(image_shape[-2] if image_shape[-1] == 3 else image_shape[-3])
+    image_size = int(primary_spec.shape[-2] if primary_spec.shape[-1] == 3 else primary_spec.shape[-3])
+    wrist_image_size = (
+        int(wrist_spec.shape[-2] if wrist_spec.shape[-1] == 3 else wrist_spec.shape[-3])
+        if wrist_spec is not None
+        else image_size
+    )
+    history_horizon = int(observation_spec["timestep_pad_mask"].shape[1])
+    task_completed_dim = int(observation_spec["task_completed"].shape[-1])
 
     dataset_stats = model.dataset_statistics
     action_stats = dataset_stats["action"] if "action" in dataset_stats else next(iter(dataset_stats.values()))["action"]
     action_dim = int(len(action_stats["mean"]))
-    return proprio_dim, image_size, action_dim
+    return proprio_dim, image_size, wrist_image_size, action_dim, history_horizon, task_completed_dim
+
+
+def augment_observation(obs: dict, *, task_completed_dim: int) -> dict:
+    augmented = dict(obs)
+    horizon = int(np.asarray(augmented["timestep_pad_mask"]).shape[0])
+    timestep_mask = np.asarray(augmented["timestep_pad_mask"], dtype=bool)
+    augmented["timestep"] = np.arange(horizon, dtype=np.int32)
+    augmented["task_completed"] = np.zeros((horizon, task_completed_dim), dtype=bool)
+    augmented["pad_mask_dict"] = {
+        "image_primary": timestep_mask.copy(),
+        "image_wrist": timestep_mask.copy(),
+        "timestep": timestep_mask.copy(),
+    }
+    return augmented
 
 
 def sample_action_chunk(
@@ -128,11 +148,13 @@ def run_policy_rollouts(
     seed: int,
     action_adapter: Callable[[np.ndarray], np.ndarray],
 ) -> RolloutSummary:
-    proprio_dim, image_size, action_dim = infer_model_metadata(model)
+    proprio_dim, image_size, wrist_image_size, action_dim, model_horizon, task_completed_dim = infer_model_metadata(model)
+    history_horizon = history_horizon if history_horizon is not None else model_horizon
     env = OctoLightweightReachEnv(
         action_dim=action_dim,
         proprio_dim=proprio_dim,
         image_size=image_size,
+        wrist_image_size=wrist_image_size,
         max_steps=max_steps,
         seed=seed,
     )
@@ -154,6 +176,7 @@ def run_policy_rollouts(
         last_info = {"distance": np.nan, "success": False}
 
         for step_idx in range(max_steps):
+            obs = augment_observation(obs, task_completed_dim=task_completed_dim)
             action_chunk, rng, infer_ms = sample_action_chunk(
                 model,
                 obs,

@@ -32,6 +32,7 @@ class OctoLightweightReachEnv(gym.Env):
         action_dim: int,
         proprio_dim: int,
         image_size: int = 256,
+        wrist_image_size: int | None = None,
         step_scale: float = 0.08,
         success_tolerance: float = 0.05,
         max_steps: int = 100,
@@ -46,6 +47,7 @@ class OctoLightweightReachEnv(gym.Env):
         self.action_dim = int(action_dim)
         self.proprio_dim = int(proprio_dim)
         self.image_size = int(image_size)
+        self.wrist_image_size = int(wrist_image_size) if wrist_image_size is not None else int(image_size)
         self.step_scale = float(step_scale)
         self.success_tolerance = float(success_tolerance)
         self.max_steps = int(max_steps)
@@ -67,7 +69,7 @@ class OctoLightweightReachEnv(gym.Env):
             "image_wrist": gym.spaces.Box(
                 low=0,
                 high=255,
-                shape=(self.image_size, self.image_size, 3),
+                shape=(self.wrist_image_size, self.wrist_image_size, 3),
                 dtype=np.uint8,
             ),
         }
@@ -96,7 +98,8 @@ class OctoLightweightReachEnv(gym.Env):
         return self._rng.uniform(low=-0.8, high=0.8, size=(2,)).astype(np.float32)
 
     def _render_image(self, *, wrist: bool = False) -> np.ndarray:
-        image = np.full((self.image_size, self.image_size, 3), 245, dtype=np.uint8)
+        image_size = self.wrist_image_size if wrist else self.image_size
+        image = np.full((image_size, image_size, 3), 245, dtype=np.uint8)
         target_xy = self._task.target_xy
         state_xy = self._state_xy
         if wrist:
@@ -104,8 +107,9 @@ class OctoLightweightReachEnv(gym.Env):
             # slightly compressed y-axis so the model does not see two identical views.
             target_xy = np.array([-target_xy[0], target_xy[1] * 0.85], dtype=np.float32)
             state_xy = np.array([-state_xy[0], state_xy[1] * 0.85], dtype=np.float32)
-        self._draw_disc(image, target_xy, radius=8, color=(220, 40, 40))
-        self._draw_disc(image, state_xy, radius=8, color=(30, 60, 220))
+        radius = max(4, image_size // 32)
+        self._draw_disc(image, target_xy, radius=radius, color=(220, 40, 40))
+        self._draw_disc(image, state_xy, radius=radius, color=(30, 60, 220))
         return image
 
     def _draw_disc(
@@ -116,9 +120,10 @@ class OctoLightweightReachEnv(gym.Env):
         radius: int,
         color: tuple[int, int, int],
     ) -> None:
-        cx = int((xy[0] * 0.5 + 0.5) * (self.image_size - 1))
-        cy = int((xy[1] * 0.5 + 0.5) * (self.image_size - 1))
-        yy, xx = np.ogrid[: self.image_size, : self.image_size]
+        image_size = image.shape[0]
+        cx = int((xy[0] * 0.5 + 0.5) * (image_size - 1))
+        cy = int((xy[1] * 0.5 + 0.5) * (image_size - 1))
+        yy, xx = np.ogrid[:image_size, :image_size]
         mask = (xx - cx) ** 2 + (yy - cy) ** 2 <= radius**2
         image[mask] = color
 
