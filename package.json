@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "fontkit": "^2.0.4",
+    "pdf-lib": "^1.17.1",
+    "png-js": "^2.0.0",
+    "pptxgenjs": "^4.0.1"
+  }
+}
