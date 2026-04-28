@@ -3,6 +3,10 @@ __pycache__/
 
 experiments/results/*
 !experiments/results/universal_vla_comparison/
+!experiments/results/robosuite_study/
+experiments/results/robosuite_study/*
+!experiments/results/robosuite_study/*.json
+!experiments/results/robosuite_study/*.png
 experiments/results/universal_vla_comparison/*
 !experiments/results/universal_vla_comparison/README.md
 !experiments/results/figures/
