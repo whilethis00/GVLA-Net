@@ -116,7 +116,7 @@ class ScriptedLiftPolicy:
         self.grasp_counter = 0
         self.init_eef_z = None
 
-    def act(self, obs: dict) -> np.ndarray:
+    def act(self, obs: dict, env=None) -> np.ndarray:
         eef_pos = np.array(obs["robot0_eef_pos"])
         cube_pos = np.array(obs["cube_pos"])
         action = np.zeros(7, dtype=np.float32)
@@ -161,6 +161,261 @@ class ScriptedLiftPolicy:
         return action
 
 
+class ScriptedNutAssemblySquarePolicy:
+    """
+    Phase-based controller for Robosuite NutAssemblySquare.
+
+    This is intentionally simple: it keeps the same 7-D OSC delta-pose action
+    interface as the Lift controller and uses environment geometry to define a
+    conservative pick → align → insert routine.
+    """
+
+    def __init__(self,
+                 hover_height: float = 0.14,
+                 peg_hover_height: float = 0.18,
+                 grasp_xy_thresh: float = 0.015,
+                 grasp_z_thresh: float = 0.010,
+                 align_xy_thresh: float = 0.010,
+                 insert_xy_thresh: float = 0.006,
+                 lift_clearance: float = 0.13,
+                 retreat_height: float = 0.12,
+                 grasp_steps: int = 14,
+                 kp_move: float = 10.0,
+                 kp_insert: float = 5.0):
+        self.hover_height = hover_height
+        self.peg_hover_height = peg_hover_height
+        self.grasp_xy_thresh = grasp_xy_thresh
+        self.grasp_z_thresh = grasp_z_thresh
+        self.align_xy_thresh = align_xy_thresh
+        self.insert_xy_thresh = insert_xy_thresh
+        self.lift_clearance = lift_clearance
+        self.retreat_height = retreat_height
+        self.grasp_steps = grasp_steps
+        self.kp_move = kp_move
+        self.kp_insert = kp_insert
+        self.reset()
+
+    def reset(self):
+        self.phase = "pregrasp"
+        self.grasp_counter = 0
+        self.release_counter = 0
+        self.lift_start_z = None
+
+    def _move_towards(self, eef_pos: np.ndarray, target: np.ndarray, kp: float) -> np.ndarray:
+        delta = target - eef_pos
+        return np.clip(kp * delta, -1.0, 1.0).astype(np.float32)
+
+    def act(self, obs: dict, env=None) -> np.ndarray:
+        if env is None:
+            raise ValueError("NutAssembly policy requires env for peg geometry access.")
+
+        eef_pos = np.array(obs["robot0_eef_pos"])
+        nut_pos = np.array(obs["SquareNut_pos"])
+        peg_pos = np.array(env.sim.data.body_xpos[env.peg1_body_id])
+        action = np.zeros(7, dtype=np.float32)
+
+        if self.phase == "pregrasp":
+            target = nut_pos.copy()
+            target[2] += self.hover_height
+            action[:3] = self._move_towards(eef_pos, target, self.kp_move)
+            action[6] = -1.0
+            xy_err = np.linalg.norm((target - eef_pos)[:2])
+            z_err = abs(target[2] - eef_pos[2])
+            if xy_err < self.grasp_xy_thresh and z_err < self.grasp_z_thresh * 3:
+                self.phase = "descend_to_grasp"
+
+        elif self.phase == "descend_to_grasp":
+            target = nut_pos.copy()
+            target[2] += 0.010
+            action[:3] = self._move_towards(eef_pos, target, self.kp_move)
+            action[6] = -1.0
+            delta = target - eef_pos
+            if np.linalg.norm(delta[:2]) < self.grasp_xy_thresh and abs(delta[2]) < self.grasp_z_thresh:
+                self.phase = "close_gripper"
+
+        elif self.phase == "close_gripper":
+            action[6] = 1.0
+            self.grasp_counter += 1
+            if self.grasp_counter >= self.grasp_steps:
+                self.phase = "lift_clear"
+                self.lift_start_z = eef_pos[2]
+
+        elif self.phase == "lift_clear":
+            action[2] = 1.0
+            action[6] = 1.0
+            if self.lift_start_z is not None and eef_pos[2] - self.lift_start_z > self.lift_clearance:
+                self.phase = "translate_to_peg"
+
+        elif self.phase == "translate_to_peg":
+            target = peg_pos.copy()
+            target[2] += self.peg_hover_height
+            action[:3] = self._move_towards(eef_pos, target, self.kp_move)
+            action[6] = 1.0
+            xy_err = np.linalg.norm((target - eef_pos)[:2])
+            z_err = abs(target[2] - eef_pos[2])
+            if xy_err < self.align_xy_thresh and z_err < self.grasp_z_thresh * 3:
+                self.phase = "align_for_insertion"
+
+        elif self.phase == "align_for_insertion":
+            target = peg_pos.copy()
+            target[2] += 0.080
+            action[:3] = self._move_towards(eef_pos, target, self.kp_insert)
+            action[6] = 1.0
+            xy_err = np.linalg.norm((target - eef_pos)[:2])
+            if xy_err < self.insert_xy_thresh:
+                self.phase = "insert"
+
+        elif self.phase == "insert":
+            target = peg_pos.copy()
+            target[2] += 0.030
+            action[:3] = self._move_towards(eef_pos, target, self.kp_insert)
+            action[6] = 1.0
+            xy_err = np.linalg.norm((target - eef_pos)[:2])
+            z_err = abs(target[2] - eef_pos[2])
+            if xy_err < self.insert_xy_thresh and z_err < self.grasp_z_thresh * 2:
+                self.phase = "release"
+
+        elif self.phase == "release":
+            action[6] = -1.0
+            self.release_counter += 1
+            if self.release_counter >= 8:
+                self.phase = "retreat"
+
+        elif self.phase == "retreat":
+            target = peg_pos.copy()
+            target[2] += self.retreat_height
+            action[:3] = self._move_towards(eef_pos, target, self.kp_move)
+            action[6] = -1.0
+            if abs(target[2] - eef_pos[2]) < self.grasp_z_thresh * 3:
+                self.phase = "done"
+
+        elif self.phase == "done":
+            action[6] = -1.0
+
+        return action
+
+
+class ScriptedPickPlaceCanPolicy:
+    """
+    Phase-based controller for single-object PickPlace with a Can target.
+    """
+
+    def __init__(self,
+                 hover_height: float = 0.14,
+                 bin_hover_height: float = 0.20,
+                 place_height: float = 0.07,
+                 grasp_xy_thresh: float = 0.018,
+                 grasp_z_thresh: float = 0.012,
+                 place_xy_thresh: float = 0.020,
+                 lift_delta: float = 0.16,
+                 grasp_steps: int = 12,
+                 release_steps: int = 10,
+                 kp_move: float = 10.0,
+                 kp_place: float = 7.0):
+        self.hover_height = hover_height
+        self.bin_hover_height = bin_hover_height
+        self.place_height = place_height
+        self.grasp_xy_thresh = grasp_xy_thresh
+        self.grasp_z_thresh = grasp_z_thresh
+        self.place_xy_thresh = place_xy_thresh
+        self.lift_delta = lift_delta
+        self.grasp_steps = grasp_steps
+        self.release_steps = release_steps
+        self.kp_move = kp_move
+        self.kp_place = kp_place
+        self.reset()
+
+    def reset(self):
+        self.phase = "pregrasp"
+        self.grasp_counter = 0
+        self.release_counter = 0
+        self.lift_start_z = None
+
+    def _move_towards(self, eef_pos: np.ndarray, target: np.ndarray, kp: float) -> np.ndarray:
+        delta = target - eef_pos
+        return np.clip(kp * delta, -1.0, 1.0).astype(np.float32)
+
+    def act(self, obs: dict, env=None) -> np.ndarray:
+        if env is None:
+            raise ValueError("PickPlace policy requires env access.")
+
+        eef_pos = np.array(obs["robot0_eef_pos"])
+        obj_pos = np.array(obs["Can_pos"])
+        target_bin = np.array(env.target_bin_placements[env.object_id])
+        action = np.zeros(7, dtype=np.float32)
+
+        if self.phase == "pregrasp":
+            target = obj_pos.copy()
+            target[2] += self.hover_height
+            action[:3] = self._move_towards(eef_pos, target, self.kp_move)
+            action[6] = -1.0
+            xy_err = np.linalg.norm((target - eef_pos)[:2])
+            z_err = abs(target[2] - eef_pos[2])
+            if xy_err < self.grasp_xy_thresh and z_err < self.grasp_z_thresh * 3:
+                self.phase = "descend_to_grasp"
+
+        elif self.phase == "descend_to_grasp":
+            target = obj_pos.copy()
+            target[2] += 0.01
+            action[:3] = self._move_towards(eef_pos, target, self.kp_move)
+            action[6] = -1.0
+            delta = target - eef_pos
+            if np.linalg.norm(delta[:2]) < self.grasp_xy_thresh and abs(delta[2]) < self.grasp_z_thresh:
+                self.phase = "close_gripper"
+
+        elif self.phase == "close_gripper":
+            action[6] = 1.0
+            self.grasp_counter += 1
+            if self.grasp_counter >= self.grasp_steps:
+                self.phase = "lift_clear"
+                self.lift_start_z = eef_pos[2]
+
+        elif self.phase == "lift_clear":
+            action[2] = 1.0
+            action[6] = 1.0
+            if self.lift_start_z is not None and eef_pos[2] - self.lift_start_z > self.lift_delta:
+                self.phase = "translate_to_bin"
+
+        elif self.phase == "translate_to_bin":
+            target = target_bin.copy()
+            target[2] += self.bin_hover_height
+            action[:3] = self._move_towards(eef_pos, target, self.kp_move)
+            action[6] = 1.0
+            xy_err = np.linalg.norm((target - eef_pos)[:2])
+            z_err = abs(target[2] - eef_pos[2])
+            if xy_err < self.place_xy_thresh and z_err < self.grasp_z_thresh * 4:
+                self.phase = "lower_to_place"
+
+        elif self.phase == "lower_to_place":
+            target = target_bin.copy()
+            target[2] += self.place_height
+            action[:3] = self._move_towards(eef_pos, target, self.kp_place)
+            action[6] = 1.0
+            xy_err = np.linalg.norm((target - eef_pos)[:2])
+            z_err = abs(target[2] - eef_pos[2])
+            if xy_err < self.place_xy_thresh and z_err < self.grasp_z_thresh * 2:
+                self.phase = "release"
+
+        elif self.phase == "release":
+            action[6] = -1.0
+            self.release_counter += 1
+            if self.release_counter >= self.release_steps:
+                self.phase = "retreat"
+
+        elif self.phase == "retreat":
+            target = target_bin.copy()
+            target[2] += self.bin_hover_height
+            action[:3] = self._move_towards(eef_pos, target, self.kp_move)
+            action[6] = -1.0
+            if abs(target[2] - eef_pos[2]) < self.grasp_z_thresh * 4:
+                self.phase = "done"
+
+        elif self.phase == "done":
+            action[6] = -1.0
+
+        return action
+
+
 # =========================================================
 # Quantisation Utilities
 # =========================================================
@@ -172,18 +427,41 @@ def quantize_action(action: np.ndarray, n_bins: int) -> np.ndarray:
     Quantisation error per dim ≈ 1 / n_bins  (half the bin width).
     Equivalent total action space: N = n_bins ^ action_dim.
     """
-    # map [-1,1] → [0, n_bins), round to bin centre
-    scaled = (action + 1.0) * 0.5 * n_bins          # [0, n_bins]
-    idx = np.clip(np.floor(scaled).astype(np.int32), 0, n_bins - 1)
-    bin_centres = (idx + 0.5) / n_bins * 2.0 - 1.0  # back to [-1,1]
-    return bin_centres.astype(np.float32)
+    q = np.empty_like(action, dtype=np.float32)
+
+    # Use symmetric nearest-centre quantisation for motion dims to avoid the
+    # positive bias introduced by floor-based binning.
+    motion = np.clip(action[:6], -1.0, 1.0)
+    if n_bins <= 1:
+        q[:6] = 0.0
+    else:
+        grid = np.linspace(-1.0, 1.0, n_bins, dtype=np.float32)
+        step = grid[1] - grid[0]
+        idx = np.rint((motion - grid[0]) / step).astype(np.int32)
+        idx = np.clip(idx, 0, n_bins - 1)
+        q[:6] = grid[idx]
+
+    # The gripper is effectively binary in these scripted policies. Quantising
+    # it with the same uniform grid creates artificial half-open states.
+    q[6] = 1.0 if action[6] >= 0.0 else -1.0
+    return q
 
 
 # =========================================================
 # Rollout & Success Rate
 # =========================================================
 
-def run_one_rollout(env, policy: ScriptedLiftPolicy,
+def make_policy(task: str):
+    if task == "lift":
+        return ScriptedLiftPolicy()
+    if task == "nut_assembly_square":
+        return ScriptedNutAssemblySquarePolicy()
+    if task == "pick_place_can":
+        return ScriptedPickPlaceCanPolicy()
+    raise ValueError(f"Unsupported task: {task}")
+
+
+def run_one_rollout(env, policy,
                     n_bins, max_steps: int, seed: int) -> bool:
     """
     Run one episode.  n_bins=None → continuous (no quantisation).
@@ -195,7 +473,7 @@ def run_one_rollout(env, policy: ScriptedLiftPolicy,
     reward_accum = 0.0
 
     for _ in range(max_steps):
-        action = policy.act(obs)
+        action = policy.act(obs, env)
         if n_bins is not None:
             action = quantize_action(action, n_bins)
         obs, reward, done, _ = env.step(action)
@@ -218,12 +496,12 @@ def run_one_rollout(env, policy: ScriptedLiftPolicy,
     return reward_accum > 0
 
 
-def measure_success_rate(env, n_bins, n_rollouts: int,
+def measure_success_rate(env, task: str, n_bins, n_rollouts: int,
                          max_steps: int) -> float:
     """Success rate over n_rollouts seeds."""
     successes = 0
     for seed in range(n_rollouts):
-        policy = ScriptedLiftPolicy()
+        policy = make_policy(task)
         if run_one_rollout(env, policy, n_bins, max_steps, seed):
             successes += 1
     return successes / n_rollouts
@@ -405,6 +683,9 @@ def plot_results(success_results: dict, latency_results: dict,
 
 def main():
     parser = argparse.ArgumentParser(description="Robosuite Quantisation Study")
+    parser.add_argument("--task", type=str, default="lift",
+                        choices=["lift", "nut_assembly_square", "pick_place_can"],
+                        help="Robosuite task to evaluate")
     parser.add_argument("--n_rollouts",  type=int, default=30,
                         help="Rollouts per quantisation level")
     parser.add_argument("--max_steps",   type=int, default=400,
@@ -426,9 +707,13 @@ def main():
     save_dir.mkdir(parents=True, exist_ok=True)
     device = args.device if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
+    print(f"Task: {args.task}")
 
     # ---- Bins to sweep ----
-    M_bins_sweep = [4, 8, 16, 32, 64, 128, 256, 512, 1024]
+    if args.task == "pick_place_can":
+        M_bins_sweep = [32, 48, 64, 96, 128]
+    else:
+        M_bins_sweep = [4, 8, 16, 32, 64, 128, 256, 512, 1024]
 
     # ---- N for latency (includes M^7 equivalents) ----
     N_latency = [1024, 4096, 16384, 65536, 262144, 1048576, 4194304]
@@ -446,8 +731,8 @@ def main():
         print("PART 1: Success Rate vs Action Quantisation")
         print("=" * 60)
 
-        env = suite.make(
-            "Lift", robots="Panda",
+        env_kwargs = dict(
+            robots="Panda",
             has_renderer=False,
             has_offscreen_renderer=False,
             use_camera_obs=False,
@@ -456,10 +741,21 @@ def main():
             reward_shaping=False,
             reward_scale=1.0,
         )
+        if args.task == "lift":
+            env_name = "Lift"
+        elif args.task == "nut_assembly_square":
+            env_name = "NutAssemblySquare"
+        elif args.task == "pick_place_can":
+            env_name = "PickPlace"
+            env_kwargs.update(single_object_mode=2, object_type="can")
+        else:
+            raise ValueError(f"Unsupported task: {args.task}")
+
+        env = suite.make(env_name, **env_kwargs)
 
         # Continuous baseline
         print(f"\n[Continuous — no quantisation]  ({args.n_rollouts} rollouts)")
-        sr = measure_success_rate(env, None, args.n_rollouts, args.max_steps)
+        sr = measure_success_rate(env, args.task, None, args.n_rollouts, args.max_steps)
         success_results["inf"] = sr
         print(f"  → Success rate: {sr * 100:.1f}%")
 
@@ -468,7 +764,7 @@ def main():
             N_total = M ** action_dim
             print(f"\n[M={M} bins/dim  |  N_total={N_total:,.0f}]"
                   f"  ({args.n_rollouts} rollouts)")
-            sr = measure_success_rate(env, M, args.n_rollouts, args.max_steps)
+            sr = measure_success_rate(env, args.task, M, args.n_rollouts, args.max_steps)
             success_results[M] = sr
             print(f"  → Success rate: {sr * 100:.1f}%")
 
@@ -495,6 +791,7 @@ def main():
         "latency":      {str(k): v for k, v in latency_results.items()},
         "config": vars(args),
         "action_dim": action_dim,
+        "task": args.task,
     }
     with open(save_dir / "results.json", "w") as f:
         json.dump(json_out, f, indent=2)
