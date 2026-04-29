@@ -22,7 +22,7 @@
    - large output space scaling,
    - structured prediction,
    - coding geometry,
-   - compute/latency trade-off
+   - compute/latency/memory trade-off
    에 있다.
 4. 따라서 실험도 robotics benchmark 나열이 아니라, **geometry + scaling + high-resolution regime**의 세 축으로 재조직되어야 한다.
 
@@ -38,6 +38,15 @@
 > 반면 정밀한 제어에서는 실제로 높은 action resolution이 필요할 수 있다.  
 > 이 구간에서 structured head와 locality-preserving coding이 더 적절한 해법이 된다.
 
+여기서 "비용"은 단순 FLOPs만이 아니라,
+
+- head compute
+- latency
+- output dimensionality
+- head memory / VRAM budget
+
+까지 포함한다.
+
 이 문장을 메인 서론, 초록, 실험 섹션 전체가 지지해야 한다.
 
 ## 무엇을 주장하고 무엇을 주장하지 않을 것인가
@@ -48,7 +57,8 @@
 2. 일부 precision-sensitive regime에서는 `256` 수준의 action resolution이 충분하지 않을 수 있다.
 3. large discrete action/output space로 갈수록 dense head 또는 sequential decoding 비용은 빠르게 증가한다.
 4. structured head는 이 large-resolution regime에서 더 유리한 scaling을 가진다.
-5. high-resolution GVLA의 성능 병목 일부는 구조 자체가 아니라 coding mismatch였으며, Gray coding이 이를 완화한다.
+5. 이 scaling advantage는 compute뿐 아니라 head memory / VRAM footprint에도 해당한다.
+6. high-resolution GVLA의 성능 병목 일부는 구조 자체가 아니라 coding mismatch였으며, Gray coding이 이를 완화한다.
 
 ### 메인에서 주장하지 않을 것
 
@@ -125,6 +135,24 @@
 
 이건 accuracy와 독립적인 시스템 claim을 지지한다.
 
+### 5. Memory / VRAM scaling
+
+메모리 관련 자산도 이미 있다.
+
+- `experiments/plot_robosuite_budget_comparison.py`
+- `experiments/plot_robosuite_results.py`
+- `experiments/universal_vla_comparison.py`
+- `experiments/pi05_verified_gvla_benchmark.py`
+- `README.md`의 hardware efficiency 정리
+
+이 자산이 주는 메시지는 분명하다.
+
+- dense head는 large output dimension에서 head memory가 빠르게 증가한다
+- structured head는 `log` 길이 code만 유지하면 되므로 memory growth가 훨씬 완만하다
+- 실제로 `16 GB`, `40 GB` 같은 practical budget line과 비교하는 자산도 이미 있다
+
+즉 이 논문은 단순히 "latency가 좋은 head"가 아니라, **large output-space regime에서 compute와 VRAM budget을 동시에 맞추는 head**라는 framing이 가능하다.
+
 ## NeurIPS형 논문 구조
 
 이 논문은 robotics paper처럼 쓰면 안 된다.  
@@ -142,6 +170,33 @@
 
 즉 로봇은 “왜 이 문제가 중요한가”를 보여주는 응용이어야지, 논문의 유일한 의미가 되어서는 안 된다.
 
+### Intro에서 양자역학 직교 측정 이야기를 할지
+
+넣는 편이 좋다. 다만 비유가 아니라 "영감과 구조" 수준으로 조심해서 써야 한다.
+
+안전한 framing은 다음과 같다.
+
+- GVLA는 각 action 차원을 `M`-way softmax로 직접 분류하는 대신,
+  서로 다른 binary decision axis들에 대한 structured measurements로 분해한다.
+- 이 관점은 "고차원 상태를 여러 개의 직교적인 질문으로 분해한다"는 점에서
+  양자역학의 orthogonal measurement intuition과 닮아 있다.
+- 하지만 논문에서 주장해야 하는 것은 물리적 의미가 아니라,
+  `orthogonal binary measurements`가 large output spaces에서 더 나은 구조와 scaling을 준다는 계산적 관점이다.
+
+즉 intro에서는
+
+> We draw inspiration from orthogonal measurement views of high-dimensional state discrimination, and use this perspective to decompose large discrete action spaces into structured binary decisions.
+
+정도로 쓰는 게 적절하다.
+
+피해야 할 표현:
+
+- "our method is quantum"
+- "this is equivalent to quantum measurement"
+- "we derive the model from quantum mechanics"
+
+이런 표현은 오해를 부른다.
+
 ### 2. Method
 
 방법 섹션에서는 세 가지를 분리해 써야 한다.
@@ -149,6 +204,7 @@
 1. structured factorization / GVLA head
 2. complexity and scaling intuition
 3. coding geometry: natural binary vs Gray code
+4. memory / VRAM implications of output dimensionality
 
 특히 Gray code는 부록용 사소한 트릭처럼 쓰면 안 된다.  
 high-resolution regime에서 왜 coding geometry가 중요한지를 보여주는 핵심 설계 포인트로 올려야 한다.
@@ -171,15 +227,14 @@ high-resolution regime에서 왜 coding geometry가 중요한지를 보여주는
 1. large structured output space의 크기
 2. dense vs structured head의 복잡도 차이
 3. natural binary와 Gray code의 locality 차이
+4. dense vs structured head의 memory growth
 
 ## 출력 공간 정의
 
 각 action 차원을 `M`개 bin으로 양자화하고 action 차원이 `d`라고 하자.  
 그러면 전체 이산 출력 공간의 크기는
 
-\[
-N = M^d
-\]
+`N = M^d`
 
 이다.
 
@@ -191,23 +246,17 @@ N = M^d
 dense head는 각 action 차원마다 `M`개의 후보를 직접 점수화한다.  
 latent 차원을 `h`라고 하면 각 차원당 출력 연산은 대략
 
-\[
-O(hM)
-\]
+`O(hM)`
 
 이고, 전체는
 
-\[
-O(d h M)
-\]
+`O(d h M)`
 
 이다.
 
 논문 본문에서는 공통 factor인 `h`를 떼고
 
-\[
-O(dM)
-\]
+`O(dM)`
 
 로 써도 충분하다.
 
@@ -218,39 +267,27 @@ O(dM)
 GVLA류 structured head는 각 action bin을 직접 `M`-way classification으로 예측하지 않고,  
 `k = \lceil \log_2 M \rceil`개의 bit code로 예측한다.
 
-각 action 차원 \(a_j\)에 대해 code를
-
-\[
-c(a_j) \in \{0,1\}^k
-\]
+각 action 차원 `a_j`에 대해 code를 `c(a_j) in {0,1}^k`
 
 로 두면, 출력 연산은 각 차원당 대략
 
-\[
-O(hk)
-\]
+`O(hk)`
 
 이고 전체는
 
-\[
-O(d h \log M)
-\]
+`O(d h log M)`
 
 이다.
 
 즉 공통 factor를 떼면
 
-\[
-O(d \log M)
-\]
+`O(d log M)`
 
 로 쓸 수 있다.
 
 이때 이론적 상대 이점은 대략
 
-\[
-\frac{M}{\log M}
-\]
+`M / log(M)`
 
 에 비례한다.
 
@@ -258,22 +295,46 @@ O(d \log M)
 
 ### 본문용 핵심 문장
 
-> For a `d`-dimensional discretized action space with `M` bins per dimension, dense heads scale as \(O(dM)\) while structured bit-wise heads scale as \(O(d\log M)\). Their relative cost gap therefore widens rapidly in the high-resolution regime.
+> For a `d`-dimensional discretized action space with `M` bins per dimension, dense heads scale as `O(dM)` while structured bit-wise heads scale as `O(d log M)`. Their relative cost gap therefore widens rapidly in the high-resolution regime.
+
+## Memory / VRAM scaling
+
+출력 차원의 증가는 시간 비용뿐 아니라 메모리 비용도 키운다.
+
+dense head의 마지막 projection이 각 차원마다 `M`개 출력을 가진다고 하면, head parameter 수는 대략
+
+`Theta(d h M)`
+
+이고, 학습 시에는 여기에
+
+- forward activations
+- backward gradients
+- optimizer states
+
+가 추가된다.
+
+즉 실제 VRAM pressure는 단순 parameter count보다 더 크게 체감된다.
+
+반면 structured head는 각 차원마다 `k = ceil(log2 M)`개의 bit만 출력하면 되므로, head parameter 및 output activation 규모는 대략
+
+`Theta(d h log M)`
+
+이다.
+
+### 본문용 핵심 문장
+
+> As output resolution grows, dense heads scale poorly not only in computation but also in output dimensionality and head memory, whereas structured heads require only logarithmic output size.
 
 ## Quantization error와 high-resolution regime
 
 연속 action을 `[-1,1]` 구간에서 균일 quantization한다고 하자.  
 차원별 bin width는 대략
 
-\[
-\Delta = \frac{2}{M}
-\]
+`Delta = 2 / M`
 
 이고, scalar action의 quantization error는 대략
 
-\[
-|u - \hat{u}| \le \frac{\Delta}{2} = \frac{1}{M}
-\]
+`|u - u_hat| <= Delta / 2 = 1 / M`
 
 수준으로 제한된다.
 
@@ -288,28 +349,16 @@ O(d \log M)
 
 ## GVLA 학습 objective
 
-각 action 차원 `j`와 bit index `\ell`에 대해 예측 logit을 \(g_{j,\ell}(z)\), target code bit를 \(c_\ell(a_j)\)라고 하자.  
+각 action 차원 `j`와 bit index `ell`에 대해 예측 logit을 `g_{j,ell}(z)`, target code bit를 `c_ell(a_j)`라고 하자.  
 그러면 GVLA의 bit-wise BCE objective는
 
-\[
-\mathcal{L}_{\mathrm{bit}}
-=
-\sum_{j=1}^{d}
-\sum_{\ell=1}^{k}
-\mathrm{BCE}\big(g_{j,\ell}(z), c_\ell(a_j)\big)
-\]
+`L_bit = sum_{j=1..d} sum_{ell=1..k} BCE(g_{j,ell}(z), c_ell(a_j))`
 
 이다.
 
 직교 regularization까지 포함하면
 
-\[
-\mathcal{L}
-=
-\mathcal{L}_{\mathrm{bit}}
-+
-\lambda \mathcal{L}_{\mathrm{ortho}}
-\]
+`L = L_bit + lambda * L_ortho`
 
 로 쓸 수 있다.
 
@@ -317,32 +366,26 @@ O(d \log M)
 
 ## Natural binary가 왜 local geometry를 깨는가
 
-자연 이진수 encoding을 \(b(i)\)라고 하자.  
+자연 이진수 encoding을 `b(i)`라고 하자.  
 우리가 원하는 것은 action index가 조금 바뀌면 target code도 조금만 바뀌는 것이다.
 
 즉 action-space locality와 code-space locality가 맞아야 한다.
 
 하지만 natural binary에서는 일반적으로
 
-\[
-H(b(i), b(i+1))
-\]
+`H(b(i), b(i+1))`
 
 가 작게 유지되지 않는다.
 
 예를 들어,
 
-\[
-3 = 011,\qquad 4 = 100
-\]
+`3 = 011, 4 = 100`
 
 으로, 인접한 bin임에도 Hamming distance가 3이다.
 
-더 일반적으로 \(i = 2^m - 1\)일 때는 carry 경계에서
+더 일반적으로 `i = 2^m - 1`일 때는 carry 경계에서
 
-\[
-H\big(b(i), b(i+1)\big) = m+1
-\]
+`H(b(i), b(i+1)) = m + 1`
 
 이 된다.
 
@@ -352,17 +395,13 @@ H\big(b(i), b(i+1)\big) = m+1
 
 Gray encoding을
 
-\[
-g(i) = i \oplus (i \gg 1)
-\]
+`g(i) = i XOR (i >> 1)`
 
 로 정의하자.
 
 Gray code의 핵심 성질은
 
-\[
-H(g(i), g(i+1)) = 1
-\]
+`H(g(i), g(i+1)) = 1`
 
 이라는 점이다.
 
@@ -370,11 +409,9 @@ H(g(i), g(i+1)) = 1
 
 ### Proposition 1. Locality preservation of Gray coding
 
-모든 정수 \(i \ge 0\)에 대해 Gray code \(g(i)=i\oplus(i\gg1)\)는
+모든 정수 `i >= 0`에 대해 Gray code `g(i) = i XOR (i >> 1)`는
 
-\[
-H(g(i), g(i+1)) = 1
-\]
+`H(g(i), g(i+1)) = 1`
 
 을 만족한다.
 
@@ -418,15 +455,11 @@ precision task 결과를 설명할 때는 다음처럼 쓰는 게 좋다.
 
 1. Complexity statement
 
-\[
-\text{Dense} = O(dM), \qquad \text{Structured} = O(d \log M)
-\]
+`Dense = O(dM), Structured = O(d log M)`
 
 2. Gray locality statement
 
-\[
-H(g(i), g(i+1)) = 1
-\]
+`H(g(i), g(i+1)) = 1`
 
 이 두 가지와 empirical validation이 잘 연결되면, 논문은 “로봇 데모 실험 모음”이 아니라  
 `large structured output modeling`에 대한 방법론 논문처럼 보이게 된다.
@@ -480,11 +513,15 @@ H(g(i), g(i+1)) = 1
 
 - `robosuite_study/results.json`
 - 필요시 `bc_study/latency_batch.json`
+- memory / budget companion:
+  - `plot_robosuite_budget_comparison.py`
+  - `plot_robosuite_results.py`
 
 메시지:
 
 - 그 large-resolution regime를 dense head나 긴 sequential decoding으로 다루면 비용이 빠르게 커진다
 - structured heads는 훨씬 유리한 scaling을 가진다
+- 이 비용에는 head memory / VRAM feasibility도 포함된다
 
 ### 이 Figure의 역할
 
@@ -492,11 +529,12 @@ H(g(i), g(i+1)) = 1
 
 1. 더 높은 resolution이 실제로 필요할 수 있다
 2. 큰 action/output space는 계산적으로 비싸다
-3. 따라서 structured head가 필요하다
+3. 큰 action/output space는 메모리 측면에서도 빠르게 비싸진다
+4. 따라서 structured head가 필요하다
 
 ### Figure 1 캡션 초안
 
-> Fine-grained action resolution can be necessary for precision-sensitive control, but the computational cost of conventional output heads grows rapidly with action-space size. Left: coarse discretization substantially degrades manipulation success. Center: under a stricter precision-placement regime, performance recovers only at substantially larger action resolution. Right: structured heads maintain favorable latency scaling where dense heads become increasingly expensive.
+> Fine-grained action resolution can be necessary for precision-sensitive control, but the cost of conventional output heads grows rapidly with action-space size. Left: coarse discretization substantially degrades manipulation success. Center: under a stricter precision-placement regime, performance recovers only at substantially larger action resolution. Right: structured heads maintain favorable scaling where dense heads become increasingly expensive in both latency and memory.
 
 ## Figure 2. Coding geometry matters
 
@@ -570,6 +608,7 @@ Gray code 결과가 들어가면 논문이 `target geometry`를 다루는 struct
 1. head-only latency
 2. batch=1
 3. larger-batch regime
+4. head memory / VRAM budget
 
 즉 이 그림은 “GVLA가 항상 wall-clock에서 더 빠르다”를 말하는 그림이 아니다.  
 무엇을 측정했고 무엇을 주장하는지를 정확히 적어야 한다.
@@ -578,16 +617,18 @@ Gray code 결과가 들어가면 논문이 `target geometry`를 다루는 struct
 
 - panel A: head-only latency vs `N`
 - panel B: batch size에 따른 latency trend
+- panel C 또는 appendix companion: head memory vs `M` or `N`, with practical GPU budget lines
 
 가능한 메시지:
 
 - asymptotic scaling은 GVLA가 훨씬 유리하다
 - 실제 hardware regime에서는 launch overhead 등으로 ordering이 달라질 수 있다
 - 그러나 large structured output spaces를 dense하게 처리하는 비용이 급격히 커진다는 점은 변하지 않는다
+- 그리고 이 비용은 latency뿐 아니라 VRAM feasibility에서도 나타난다
 
 ### Figure 3 캡션 초안
 
-> Structured heads offer favorable scaling as output-space size grows. We report head-only latency and batch-dependent measurements separately, since wall-clock ordering can depend on hardware and kernel-launch effects even when asymptotic complexity differs substantially.
+> Structured heads offer favorable scaling as output-space size grows. We report head-only latency, batch-dependent measurements, and head-memory trends separately, since wall-clock ordering can depend on hardware and kernel-launch effects even when asymptotic complexity and memory growth differ substantially.
 
 ## Appendix로 내려야 할 것
 
@@ -655,6 +696,23 @@ Gray code 결과가 들어가면 논문이 `target geometry`를 다루는 struct
 
 즉 appendix에서는 매우 강하지만, 메인에는 과하다.
 
+## Appendix F. Memory / budget comparison details
+
+메모리 관련 자산은 appendix에서 매우 잘 산다.
+
+- `plot_robosuite_budget_comparison.py`
+- `plot_robosuite_results.py`
+- `universal_vla_comparison.py`
+- `pi05_verified_gvla_benchmark.py`
+
+역할:
+
+- dense와 GVLA의 head memory 계산식 명시
+- `16 GB`, `40 GB` budget line 제시
+- large-resolution regime에서 dense head가 왜 비현실적인지 보조 설명
+
+메인 본문에는 memory 메시지를 짧게 두고, 구체적인 budget figure는 appendix 또는 supplementary figure로 내려도 충분하다.
+
 ## 지금 당장 필요한 추가 실험
 
 새로운 방향의 breadth는 필요 없다.  
@@ -698,6 +756,14 @@ Gray code 결과가 들어가면 논문이 `target geometry`를 다루는 struct
 
 현재 자산은 충분하다.  
 필요한 건 새 측정보다 “무엇을 측정한 그림인지”를 더 명료하게 정리하는 것이다.
+
+여기에는 memory도 포함된다.
+
+- latency는 무엇을 측정했는지
+- batch effect는 어떤 의미인지
+- memory는 head parameter 기준인지, activation 기준인지, budget overlay인지
+
+를 문서상 분리해서 써야 한다.
 
 ## 필수 5. 작은 synthetic geometry 그림
 
@@ -749,7 +815,7 @@ Gray code 결과가 들어가면 논문이 `target geometry`를 다루는 struct
 - Figure 1: coarse discretization failure + precision regime recovery + scaling motivation
 - Figure 2: Gray code ablation
 - Table 1: `custom2.5` high-confidence success rate with CI
-- Figure 3: scaling / latency with measurement conditions
+- Figure 3: scaling / latency / memory with measurement conditions
 
 ### Appendix
 
@@ -758,6 +824,7 @@ Gray code 결과가 들어가면 논문이 `target geometry`를 다루는 struct
 - basic quantization sweeps
 - BC full sweep
 - geometry / orthogonality / entropy / collision diagnostics
+- memory / VRAM budget comparison details
 - implementation details
 
 ## Reviewer 질문 대응 포인트
