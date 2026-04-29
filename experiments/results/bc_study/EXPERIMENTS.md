@@ -21,6 +21,98 @@ GVLA는 두 가지를 주장한다.
 
 ---
 
+## Dense head vs GVLA head — 뭐가 다른가?
+
+### 공통 구조
+
+두 방식 모두 **같은 MLP backbone**을 공유한다.
+
+```
+obs (49-dim) → Linear(512) → LN → ReLU
+             → Linear(512) → LN → ReLU
+             → Linear(256) → LN
+             → latent z (256-dim)
+```
+
+head만 다르다.
+
+---
+
+### Dense head — M-class softmax classifier
+
+action을 M개 bin으로 quantize한 뒤, 어느 bin인지 분류하는 문제로 바꾼다.
+action dim 7개 각각에 독립적인 softmax classifier를 붙인다.
+
+```
+z (256-dim) → Linear(256, M) → M개 logit  (action dim마다 1개)
+```
+
+**학습:** CrossEntropy loss (= log_softmax + NLL)
+
+```
+L_dense = sum_{d=1}^{7} CE(logits_d, bin_d)
+```
+
+**추론:** argmax → bin index → continuous action으로 복원
+
+```
+idx = argmax(logits)          # softmax 생략 가능 (단조 증가)
+action = (idx + 0.5) / M * 2 - 1
+```
+
+**복잡도:** Linear(256, M) 행렬 곱 → O(dM), M이 커질수록 선형 증가
+
+---
+
+### GVLA head — binary bit classifier (orthogonal projection)
+
+action bin index를 k = ceil(log₂M)개 비트로 표현하고, 각 비트를 독립적으로 예측한다.
+
+```
+z (256-dim) → W (k×256) → k개 projection  (action dim마다 1개)
+```
+
+W의 각 행은 latent space의 hyperplane을 정의한다.
+projection의 부호(sign)가 각 비트의 예측값이 된다.
+
+**학습:** BCE loss on each bit + orthogonality regularization
+
+```
+L_gvla = L_bit + λ · L_ortho
+
+L_bit   = sum_{d=1}^{7} sum_{j=1}^{k} BCE(p_{d,j}, c_j(bin_d))
+L_ortho = sum_{d=1}^{7} ||W_d W_d^T - I||_F^2
+λ = 0.01  (default, Exp5에서 ablation 예정)
+```
+
+c_j(bin_d) : bin index를 Gray code 또는 natural binary로 변환한 j번째 비트
+
+**추론:** projection → hard thresholding → bit → bin index → continuous action
+
+```
+bits = (projection >= 0).float()
+bin_idx = gray_decode(bits)   # or natural binary decode
+action = (bin_idx + 0.5) / M * 2 - 1
+```
+
+**복잡도:** Linear(256, k) 행렬 곱 → O(d log M), M이 커져도 log 스케일
+
+---
+
+### 한눈에 비교
+
+| | Dense | GVLA |
+|---|-------|------|
+| head 구조 | Linear(d, M) × 7 | OrthogonalProjectionLayer(d, k) × 7 |
+| output | M개 logit per dim | k개 projection per dim |
+| 학습 loss | CrossEntropy | BCE + orthogonality reg |
+| action encoding | bin index (직접) | binary code (natural or Gray) |
+| head 복잡도 | O(dM) | O(d log M) |
+| M=1024일 때 k | — | 10 |
+| M=65536일 때 k | — | 16 |
+
+---
+
 ## 실험 목록
 
 | # | 이름 | 설정 | 상태 |
