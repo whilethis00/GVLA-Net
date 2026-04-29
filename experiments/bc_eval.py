@@ -23,6 +23,7 @@ Usage:
 import argparse
 import json
 import math
+import os
 import sys
 import time
 from pathlib import Path
@@ -86,8 +87,20 @@ def run_rollout(policy: BCPolicy, env, max_steps: int,
     return reward_sum > 0, reward_sum
 
 
+def write_json_atomic(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with tmp_path.open("w") as handle:
+        json.dump(payload, handle, indent=2)
+        handle.flush()
+        os.fsync(handle.fileno())
+    tmp_path.replace(path)
+
+
 def eval_success_rate(policy: BCPolicy, n_rollouts: int,
-                      max_steps: int, device: torch.device) -> dict:
+                      max_steps: int, device: torch.device,
+                      partial_out: Path | None = None,
+                      partial_meta: dict | None = None) -> dict:
     import robosuite as suite
     env = suite.make(
         "Lift", robots="Panda",
@@ -96,15 +109,47 @@ def eval_success_rate(policy: BCPolicy, n_rollouts: int,
         horizon=max_steps, reward_shaping=False,
     )
     successes = 0
+    rollout_trace = []
     for seed in range(n_rollouts):
         ok, _ = run_rollout(policy, env, max_steps, seed, device)
         if ok:
             successes += 1
+        rollout_trace.append({
+            "rollout": seed + 1,
+            "seed": seed,
+            "success": bool(ok),
+            "successes_so_far": successes,
+        })
+        if partial_out is not None:
+            partial_payload = {
+                "status": "running",
+                "n_rollouts_target": n_rollouts,
+                "rollouts_completed": seed + 1,
+                "successes": successes,
+                "success_rate_so_far": successes / (seed + 1),
+                "partial_rollouts": rollout_trace,
+            }
+            if partial_meta:
+                partial_payload.update(partial_meta)
+            write_json_atomic(partial_out, partial_payload)
         print(f"\r  rollout {seed+1}/{n_rollouts}  success={successes}", end="", flush=True)
     print()
     env.close()
     sr = successes / n_rollouts
-    return {"success_rate": sr, "n_rollouts": n_rollouts, "successes": successes}
+    result = {"success_rate": sr, "n_rollouts": n_rollouts, "successes": successes}
+    if partial_out is not None:
+        final_payload = {
+            "status": "completed",
+            "n_rollouts_target": n_rollouts,
+            "rollouts_completed": n_rollouts,
+            "successes": successes,
+            "success_rate": sr,
+            "partial_rollouts": rollout_trace,
+        }
+        if partial_meta:
+            final_payload.update(partial_meta)
+        write_json_atomic(partial_out, final_payload)
+    return result
 
 
 # ============================================================
@@ -154,7 +199,8 @@ def measure_head_latency(head_type: str, n_bins_list: list,
 
 def eval_checkpoint(ckpt_path: Path, config_path: Path,
                     n_rollouts: int, max_steps: int,
-                    device: torch.device) -> dict:
+                    device: torch.device,
+                    partial_out: Path | None = None) -> dict:
     """Load a checkpoint, evaluate success rate, return result dict."""
     with open(config_path) as f:
         cfg = json.load(f)
@@ -171,7 +217,20 @@ def eval_checkpoint(ckpt_path: Path, config_path: Path,
     policy.eval()
 
     print(f"\n[{cfg['exp_name']}]  head={cfg['head']}  n_bins={cfg['n_bins']}")
-    result = eval_success_rate(policy, n_rollouts, max_steps, device)
+    partial_meta = {
+        "exp_name": cfg["exp_name"],
+        "head": cfg["head"],
+        "n_bins": cfg["n_bins"],
+        "gray_code": cfg.get("gray_code", False),
+        "ckpt_path": str(ckpt_path),
+        "config_path": str(config_path),
+        "max_steps": max_steps,
+    }
+    result = eval_success_rate(
+        policy, n_rollouts, max_steps, device,
+        partial_out=partial_out,
+        partial_meta=partial_meta,
+    )
     result.update({
         "exp_name": cfg["exp_name"],
         "head": cfg["head"],
@@ -190,9 +249,20 @@ def plot_results(results: list, latency_dense: dict,
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    import matplotlib.ticker as mticker
 
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
+
+    def finalize_figure(fig, path_stem: str):
+        try:
+            fig.tight_layout()
+        except Exception as exc:
+            print(f"[plot] tight_layout skipped for {path_stem}: {exc}")
+            fig.subplots_adjust(left=0.10, right=0.90, bottom=0.12, top=0.90)
+        fig.savefig(save_dir / f"{path_stem}.png", dpi=150, bbox_inches="tight")
+        fig.savefig(save_dir / f"{path_stem}_paper.png", dpi=300, bbox_inches="tight")
+        plt.close(fig)
 
     # ── organise results by head & n_bins ─────────────────
     dense_sr, gvla_sr = {}, {}
@@ -211,6 +281,16 @@ def plot_results(results: list, latency_dense: dict,
     d_lat   = [latency_dense[n]["head_ms"] for n in N_lat]
     g_lat   = [latency_gvla[n]["head_ms"]  for n in N_lat]
 
+    def configure_log2_xaxis(ax, values):
+        positive = [v for v in values if v and v > 0]
+        if not positive:
+            return
+        ax.set_xscale("log", base=2)
+        ax.set_xlim(min(positive) * 0.9, max(positive) * 1.1)
+        ax.xaxis.set_major_locator(mticker.FixedLocator(positive))
+        ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x)}"))
+        ax.xaxis.set_minor_locator(mticker.NullLocator())
+
     # ── Figure 1: success rate ────────────────────────────
     fig, ax = plt.subplots(figsize=(8, 5))
     if M_dense:
@@ -219,23 +299,20 @@ def plot_results(results: list, latency_dense: dict,
     if M_gvla:
         ax.plot(M_gvla, [gvla_sr[m] for m in M_gvla],
                 "bs-", lw=2.2, ms=9, label="GVLA head   O(log M)")
-    ax.set_xscale("log", base=2)
+    configure_log2_xaxis(ax, M_all)
     ax.set_xlabel("Bins per action dim (M)", fontsize=13)
     ax.set_ylabel("Task Success Rate (%)", fontsize=13)
     ax.set_title("Lift: BC Success Rate vs Action Resolution", fontsize=13)
     ax.set_ylim(-5, 110)
     ax.legend(fontsize=11)
     ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(save_dir / "bc_success_rate.png", dpi=150, bbox_inches="tight")
-    fig.savefig(save_dir / "bc_success_rate_paper.png", dpi=300, bbox_inches="tight")
-    plt.close()
+    finalize_figure(fig, "bc_success_rate")
 
     # ── Figure 2: latency ─────────────────────────────────
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.plot(N_lat, d_lat, "r^-", lw=2.2, ms=9, label="Dense head  O(M)")
     ax.plot(N_lat, g_lat, "bs-", lw=2.2, ms=9, label="GVLA head   O(log M)")
-    ax.set_xscale("log", base=2)
+    configure_log2_xaxis(ax, N_lat)
     ax.set_yscale("log")
     ax.set_xlabel("Bins per action dim (M)", fontsize=13)
     ax.set_ylabel("Head latency (ms, log scale)", fontsize=13)
@@ -251,10 +328,7 @@ def plot_results(results: list, latency_dense: dict,
                     xytext=(-80, -25), textcoords="offset points",
                     fontsize=10, color="#1a9641",
                     arrowprops=dict(arrowstyle="->", color="#1a9641"))
-    fig.tight_layout()
-    fig.savefig(save_dir / "bc_latency.png", dpi=150, bbox_inches="tight")
-    fig.savefig(save_dir / "bc_latency_paper.png", dpi=300, bbox_inches="tight")
-    plt.close()
+    finalize_figure(fig, "bc_latency")
 
     # ── Figure 3: combined (success + latency dual-axis) ──
     fig, ax1 = plt.subplots(figsize=(10, 6))
@@ -276,7 +350,7 @@ def plot_results(results: list, latency_dense: dict,
     ax2.plot(N_lat, g_lat, "s--", color=c_gvla,  lw=1.8, ms=7, alpha=0.7,
              label="GVLA latency")
 
-    ax1.set_xscale("log", base=2)
+    configure_log2_xaxis(ax1, sorted(set(M_all) | set(N_lat)))
     ax2.set_yscale("log")
     ax1.set_xlabel("Bins per action dim (M)", fontsize=13)
     ax1.set_ylabel("Task Success Rate (%)", fontsize=13)
@@ -288,10 +362,7 @@ def plot_results(results: list, latency_dense: dict,
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax1.legend(lines1 + lines2, labels1 + labels2, fontsize=10, loc="lower right")
-    fig.tight_layout()
-    fig.savefig(save_dir / "bc_combined.png", dpi=150, bbox_inches="tight")
-    fig.savefig(save_dir / "bc_combined_paper.png", dpi=300, bbox_inches="tight")
-    plt.close()
+    finalize_figure(fig, "bc_combined")
 
     print(f"[plot] saved to {save_dir}")
 
@@ -314,10 +385,13 @@ def main():
     parser.add_argument("--n_latency_trials", type=int, default=2000)
     parser.add_argument("--out", type=str,
                         default="experiments/results/bc_study/eval_results.json")
+    parser.add_argument("--partial_out", type=str, default=None,
+                        help="Optional path for per-rollout partial JSON writes")
     parser.add_argument("--plot_dir", type=str,
                         default="experiments/results/bc_study/figures")
     parser.add_argument("--skip_rollout",  action="store_true")
     parser.add_argument("--skip_latency",  action="store_true")
+    parser.add_argument("--skip_plots", action="store_true")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -339,7 +413,8 @@ def main():
                     print(f"  → success_rate={r['success_rate']*100:.1f}%")
         elif args.ckpt and args.config:
             r = eval_checkpoint(Path(args.ckpt), Path(args.config),
-                                args.n_rollouts, args.max_steps, device)
+                                args.n_rollouts, args.max_steps, device,
+                                partial_out=Path(args.partial_out) if args.partial_out else None)
             all_results.append(r)
 
     # ── latency sweep ──────────────────────────────────────
@@ -386,7 +461,7 @@ def main():
                 print(f"{n:>6}  {d:>10.4f}  {g:>10.4f}  {d/g:>7.1f}×")
 
     # ── plot ───────────────────────────────────────────────
-    if all_results or (lat_dense and lat_gvla):
+    if (all_results or (lat_dense and lat_gvla)) and not args.skip_plots:
         plot_results(all_results, lat_dense, lat_gvla, Path(args.plot_dir))
 
 
