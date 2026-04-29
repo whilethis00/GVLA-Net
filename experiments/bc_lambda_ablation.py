@@ -45,7 +45,7 @@ CKPT_DIR = Path("experiments/results/bc_study/lambda_ablation/checkpoints")
 EVAL_OUT = Path("experiments/results/bc_study/lambda_ablation/results.json")
 PLOT_DIR = Path("experiments/results/bc_study/lambda_ablation/figures")
 
-LAMBDAS = [0.0, 0.001, 0.01, 0.1, 1.0]
+LAMBDAS = [0.0, 0.001, 0.01, 0.1, 1.0, 5.0, 10.0]
 M = 256
 DATA = "data/robomimic/lift/ph/low_dim_v141.hdf5"
 
@@ -245,27 +245,48 @@ def main():
     obs_dim = dataset.obs.shape[1]
     action_dim = dataset.act.shape[1]
 
-    # ── training sweep ───────────────────────────────────────
+    # ── 기존 결과 로드 (있으면 재사용) ──────────────────────────
+    existing = {}
+    if EVAL_OUT.exists():
+        with open(EVAL_OUT) as f:
+            for r in json.load(f):
+                existing[r["lambda"]] = r
+        print(f"Loaded {len(existing)} existing results from {EVAL_OUT}")
+
+    # ── training sweep (없는 것만) ────────────────────────────
     print("=" * 50)
     print(" Training sweep")
     print("=" * 50)
     trained_dirs = []
     for lam in LAMBDAS:
-        print(f"\n[TRAIN] lambda={lam}")
-        out_dir, _ = train_one(lam, dataset, obs_dim, action_dim,
-                               args.epochs, args.batch_size, args.lr, device)
-        trained_dirs.append(out_dir)
+        exp_name = f"lambda_{str(lam).replace('.', 'p')}"
+        out_dir = CKPT_DIR / exp_name
+        if (out_dir / "best.pt").exists() and (out_dir / "config.json").exists():
+            print(f"\n[SKIP] lambda={lam} — checkpoint exists")
+            trained_dirs.append(out_dir)
+        else:
+            print(f"\n[TRAIN] lambda={lam}")
+            out_dir, _ = train_one(lam, dataset, obs_dim, action_dim,
+                                   args.epochs, args.batch_size, args.lr, device)
+            trained_dirs.append(out_dir)
 
-    # ── eval sweep ───────────────────────────────────────────
+    # ── eval sweep (없는 것만) ────────────────────────────────
     print("=" * 50)
     print(" Evaluation sweep")
     print("=" * 50)
     all_results = []
     for lam, out_dir in zip(LAMBDAS, trained_dirs):
-        print(f"\n[EVAL] lambda={lam}")
-        r = eval_one(out_dir, args.n_rollouts, args.max_steps, device)
-        all_results.append(r)
-        print(f"  success_rate={r['success_rate']*100:.1f}%")
+        if lam in existing:
+            print(f"\n[SKIP] lambda={lam} — result exists")
+            all_results.append(existing[lam])
+        else:
+            print(f"\n[EVAL] lambda={lam}")
+            r = eval_one(out_dir, args.n_rollouts, args.max_steps, device)
+            all_results.append(r)
+            print(f"  success_rate={r['success_rate']*100:.1f}%")
+
+    # λ 순서로 정렬
+    all_results.sort(key=lambda r: r["lambda"])
 
     # ── save ─────────────────────────────────────────────────
     EVAL_OUT.parent.mkdir(parents=True, exist_ok=True)
