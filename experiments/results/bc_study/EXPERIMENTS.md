@@ -121,7 +121,7 @@ action = (bin_idx + 0.5) / M * 2 - 1
 | 2 | Full mode — GPU (A100) | epochs=200, n_rollouts=50 | ✅ 완료 |
 | 3 | Gray Code Ablation — GPU (A100) | epochs=200, n_rollouts=50 | ✅ 완료 |
 | 4 | Batch × M Latency Sweep — GPU (A100) | batch∈{1,8,32,128,512,1024}, M∈{8…65536} | ✅ 완료 |
-| 5 | λ Ablation (ortho reg) — GPU (A100) | λ∈{0,0.001,0.01,0.1,1.0}, M=256, gray | 🔄 예정 |
+| 5 | λ Ablation (ortho reg) — GPU (A100) | λ∈{0,0.001,0.01,0.1,1.0}, M=256, gray | ✅ 완료 |
 
 > **Exp 2 vs Exp 3 숫자가 다른 이유:**
 > 실험 3은 실험 2의 체크포인트를 재사용한 게 아니라 **처음부터 전체를 다시 학습했다.**
@@ -341,6 +341,62 @@ crossover point (GVLA < Dense):
 batch=1 결과만 보고 "GVLA가 더 느리다"고 결론냈던 실험 2의 해석을 수정해야 한다.
 단일 추론(batch=1) 시나리오는 kernel overhead가 지배하므로, latency 우위는
 **대규모 병렬 추론 or 대용량 action space(M≥16384)** 에서 의미 있게 나타난다.
+
+---
+
+## 남은 과제
+
+## 실험 5 — λ Ablation (완료)
+
+**목적:** orthogonality regularization 강도(λ)가 성능에 미치는 영향 확인
+
+**total loss:**
+```
+L = L_bit + λ · L_ortho
+L_ortho = sum_{d=1}^{7} ||W_d W_d^T - I||_F^2
+```
+
+**설정:** GVLA gray, M=256, epochs=200, n_rollouts=50
+
+### 결과
+
+| λ | success rate | best_loss | 해석 |
+|---|-------------|-----------|------|
+| 0.0 | 2% | 1.5710 | W collapse — 비트 전부 중복 |
+| 0.001 | 8% | 1.6125 | 약한 regularization |
+| 0.01 | 12% | 1.6275 | 현재 default |
+| 0.1 | 12% | 1.6233 | default와 동일 |
+| 1.0 | **16%** | 1.6191 | 가장 좋음 |
+
+### 핵심 발견
+
+**λ=0 → 2%: orthogonality regularization이 필수적임**
+
+regularization 없으면 W의 각 행이 학습 중 같은 방향으로 collapse한다.
+k개 비트가 전부 동일한 정보를 인코딩하게 되어 2^k 개 셀이 아닌 사실상 2개 셀만 사용하는 것과 같아진다.
+
+**λ=1.0이 best지만 통계적으로 아직 약함**
+
+16% = 8/50, 12% = 6/50 → 2번 차이. n=50으로는 유의미한 차이라고 보기 어렵다.
+트렌드(λ 클수록 좋아지는 경향)는 의미 있지만 "λ=1.0이 최적"이라는 주장은 아직 약하다.
+
+**training loss vs success rate 역설**
+
+λ=0일 때 training loss가 가장 낮다(1.571).
+그러나 success rate는 최악(2%). orthogonality 없이 loss만 낮추면 W가 collapse해서
+rollout에서는 엉터리 action을 출력한다.
+
+### 논문에 쓸 수 있는 표현
+
+> "Without orthogonality regularization (λ=0), all k projection vectors collapse
+> to similar directions, effectively reducing 2^k cells to a few. This results in
+> near-zero success rate despite low training loss. Orthogonality regularization
+> is therefore necessary, not optional, for GVLA to function correctly."
+
+### 남은 과제
+
+- [ ] λ > 1.0 (예: 5.0, 10.0) 테스트 — peak가 어디인지
+- [ ] n_rollouts=200 이상으로 λ=0.01 vs 1.0 재확인
 
 ---
 
