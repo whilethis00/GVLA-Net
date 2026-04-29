@@ -8,6 +8,7 @@ experiments/results/*
 experiments/results/bc_study/*
 !experiments/results/bc_study/EXPERIMENTS.md
 !experiments/results/bc_study/eval_results.json
+!experiments/results/bc_study/latency_batch.json
 !experiments/results/bc_study/figures/
 experiments/results/bc_study/figures/*
 !experiments/results/bc_study/figures/*.png
