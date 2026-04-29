@@ -9,6 +9,12 @@ experiments/results/bc_study/*
 !experiments/results/bc_study/EXPERIMENTS.md
 !experiments/results/bc_study/eval_results.json
 !experiments/results/bc_study/latency_batch.json
+!experiments/results/bc_study/lambda_ablation/
+experiments/results/bc_study/lambda_ablation/*
+!experiments/results/bc_study/lambda_ablation/results.json
+!experiments/results/bc_study/lambda_ablation/figures/
+experiments/results/bc_study/lambda_ablation/figures/*
+!experiments/results/bc_study/lambda_ablation/figures/*.png
 !experiments/results/bc_study/figures/
 experiments/results/bc_study/figures/*
 !experiments/results/bc_study/figures/*.png
