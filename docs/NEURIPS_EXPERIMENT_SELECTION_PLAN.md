@@ -13,6 +13,8 @@
 
 GVLA의 대답은 두 부분으로 이루어진다. 첫째, 각 action dimension에서 `M`개의 후보를 직접 점수화하는 대신, 길이가 `log2(M)`인 structured binary code를 예측함으로써 출력 차원을 줄인다. 둘째, 단순한 natural binary coding이 아니라 Gray coding을 사용하여 code-space locality를 보존하고, 이를 통해 high-resolution regime에서의 학습 신호를 더 부드럽고 일관되게 만든다.
 
+이 framing에서 중요한 점은, GVLA가 precision과 cost 사이의 trade-off를 완전히 제거한다고 주장하지 않는다는 것이다. 기존 dense head에서는 action resolution `M`을 키울수록 precision은 좋아질 수 있지만, 동시에 출력 비용은 `O(dM)`으로 증가한다. GVLA의 기여는 이 trade-off를 부정하는 것이 아니라, per-dimension `M`-way prediction을 `O(d log M)` structured prediction으로 바꿈으로써 정밀도-비용 Pareto frontier를 더 유리한 방향으로 이동시키는 데 있다. Gray coding은 여기에 더해, high-resolution regime에서 binary code 학습이 locality mismatch 때문에 무너지는 문제를 완화함으로써, 그 shifted frontier 위에서 실제 학습 성능이 유지되도록 돕는다.
+
 ## 제목
 
 고정 제목은 다음으로 둔다.
@@ -45,6 +47,8 @@ GVLA의 대답은 두 부분으로 이루어진다. 첫째, 각 action dimension
 
 GVLA는 여기서 structured binary action routing이라는 형태로 등장한다. GVLA는 각 action dimension의 bin을 직접 `M`-way classification으로 고르지 않고, 길이가 `ceil(log2 M)`인 binary code를 예측한다. 이 표현은 큰 output space를 더 효율적으로 다룰 수 있게 하지만, 단순히 bit 수를 줄이는 것만으로는 충분하지 않다. 바로 이 지점에서 code geometry가 핵심이 된다.
 
+이 시점에서 양자역학의 직교 측정에 대한 짧은 직관을 넣을 수 있다. GVLA는 거대한 discrete state를 하나의 거대한 softmax로 판별하는 대신, 여러 개의 orthogonal binary questions로 분해해 판별한다. 이 관점은 고차원 상태 구분을 직교 측정의 조합으로 바라보는 양자역학적 intuition과 닮아 있다. 물론 여기서의 주장은 물리적 동등성이 아니라 계산적 구조에 관한 것이다. 즉 GVLA는 orthogonal binary measurements라는 관점을 통해 large output space를 더 잘 분해하고 다루는 structured prediction 방식으로 제시된다.
+
 서론의 마지막 단락은 natural binary와 Gray code의 차이를 소개해야 한다. natural binary에서는 인접한 action bin이 code-space에서는 멀어질 수 있다. 이 경우 BCE 기반 bit prediction은 물리적으로 가까운 action을 완전히 다른 target처럼 학습하게 된다. Gray coding은 인접한 bin을 정확히 1-bit transition으로 대응시킴으로써 이런 locality mismatch를 줄인다. 이 단락의 끝에서 contribution을 제시한다.
 
 ## 기여 요약
@@ -73,6 +77,8 @@ GVLA의 학습 objective는 bit-wise BCE로 정리한다. 각 action dimension `
 그 다음이 논문의 핵심인 code geometry다. natural binary에서는 인접한 bin이 code-space에서 멀어질 수 있다. 예를 들어 `3 = 011`, `4 = 100`은 인접한 index이지만 Hamming distance가 3이다. carry boundary에서는 이런 multi-bit flip이 더 커질 수 있다. 반면 Gray code는 `g(i) = i XOR (i >> 1)`로 정의되고, `H(g(i), g(i+1)) = 1`을 만족한다. 즉 adjacent bins는 code-space에서도 정확히 한 bit만 다르게 된다. 본문에서는 이것을 proposition 수준으로 간단히 제시하면 충분하다. 증명의 목적 자체보다, 이 성질이 BCE supervision과 직접 연결된다는 점이 더 중요하다.
 
 마지막으로 메모리 논의를 짧게 포함한다. dense head는 head parameter, output activation, gradient, optimizer state가 output dimension과 함께 커진다. 반면 GVLA는 `log` 길이 output만 유지하면 되므로 head memory growth가 훨씬 완만하다. 따라서 논문은 시간 복잡도뿐 아니라 head memory / VRAM feasibility에서도 structured head의 장점을 주장할 수 있다.
+
+이 방법 섹션의 결론은 trade-off를 완전히 없앴다는 것이 아니다. 더 정확히는, high-resolution regime에서 precision을 얻기 위해 치러야 하던 dense head의 선형 비용을 logarithmic structured prediction으로 바꾸어, precision-scaling Pareto frontier 자체를 더 유리한 위치로 이동시켰다는 것이다.
 
 ## 실험 섹션의 구성
 
@@ -112,4 +118,4 @@ Discussion에서는 주장을 넓히지 않아야 한다. 이 논문은 GVLA가 
 
 이 논문은 “GVLA가 로봇을 잘하나?”를 묻는 논문이 아니다. 이 논문이 묻는 질문은 “high-resolution action space가 실제로 필요해지는 순간, 기존 dense prediction의 전체 비용을 치르지 않고 그것을 어떻게 다룰 것인가?”이다. GVLA의 답은 structured bit-wise routing으로 large output-space scaling을 줄이고, Gray coding으로 code-space locality를 복원해 high-resolution learning을 가능하게 하는 것이다.
 
-이 흐름이 유지되면, 논문은 robotics benchmark paper가 아니라 **geometry-aware structured output modeling paper with robotics as a demanding application**으로 읽히게 된다.
+이 흐름이 유지되면, 논문은 robotics benchmark paper가 아니라 **geometry-aware structured output modeling paper with robotics as a demanding application**으로 읽히게 된다. 보다 직접적으로 말하면, GVLA의 기여는 precision-cost trade-off를 완전히 없애는 것이 아니라, linear output growth를 logarithmic structured prediction으로 대체함으로써 그 Pareto frontier를 더 나은 쪽으로 이동시키는 데 있다.
