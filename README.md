@@ -343,6 +343,63 @@ k개의 직교 초평면이 잠재 공간을 2^k개의 셀로 분할. k=20으로
 
 ![Ablation Orthogonality](experiments/results/figures/ablation_orthogonality.png)
 
+### Algorithm 1. GVLA Training
+
+**Input**
+- observation `o`
+- continuous action `a \in \mathbb{R}^D`
+- bins per dimension `M`
+- encoder / code function `c(\cdot)` (`binary` or `Gray code`)
+
+**Output**
+- trained GVLA parameters `W` and backbone weights
+
+```text
+1. z <- Backbone(o)
+
+2. For each action dimension j = 1, ..., D:
+       b_j <- Quantize(a_j, M)
+       y_j <- c(b_j) in {0,1}^k
+       p_j <- W_j z in R^k
+
+3. Compute bit loss:
+       L_bit <- sum_j sum_l BCEWithLogits(p_{j,l}, y_{j,l})
+
+4. Compute orthogonality regularization:
+       L_ortho <- ||W W^T - I||_F^2
+
+5. Optimize:
+       L_GVLA <- L_bit + lambda L_ortho
+```
+
+### Algorithm 2. GVLA Inference
+
+**Input**
+- observation `o`
+- trained GVLA head
+- bins per dimension `M`
+- code decoder `c^{-1}(\cdot)`
+
+**Output**
+- predicted action `\hat{a} \in \mathbb{R}^D`
+
+```text
+1. z <- Backbone(o)
+
+2. For each action dimension j = 1, ..., D:
+       p_j    <- W_j z
+       yhat_j <- 1[p_j > 0]
+       bhat_j <- c^{-1}(yhat_j)
+       ahat_j <- Dequantize(bhat_j, M)
+
+3. Return action ahat in R^D
+```
+
+**Key point for paper discussion**
+- Dense predicts `M` logits per action dimension and selects an action via `argmax`.
+- GVLA predicts only `k = \lceil \log_2 M \rceil` projection bits per dimension, thresholds them, reconstructs the action code, and then dequantizes it.
+- This is the core computational difference: `O(M)` logits versus `O(\log_2 M)` bit decisions.
+
 ### Formal Statement for Method
 
 **Theorem 1 (Information-Theoretic Lower Bound).**  
