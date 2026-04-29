@@ -3,9 +3,9 @@ fig_concept.py
 ==============
 Concept figure: problem → method → result
 
-Panel 1 (Left)   — "문제": Dense head, M개 화살표 → 복잡하고 무거움
-Panel 2 (Middle) — "우리 방법": k개 hyperplane + 점 → cell routing 화살표
-Panel 3 (Right)  — "결과": k=3, 8개 cell 이쁘게 색으로 구분
+Panel 1 (Left)   — Dense head: z → M arrows, O(dM), 복잡하고 무거움
+Panel 2 (Middle) — GVLA routing: 점 잔뜩 + k hyperplane + 색 화살표로 각 셀로 수렴
+Panel 3 (Right)  — 결과: 같은 점들이 8개 셀에 이쁘게 정렬됨
 
 Usage:
     python experiments/fig_concept.py
@@ -18,9 +18,6 @@ import torch
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from matplotlib.patches import FancyArrowPatch
-from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 torch.manual_seed(42)
@@ -29,203 +26,198 @@ np.random.seed(42)
 OUT_DIR = "/home/introai11/.agile/users/hsjung/projects/GVLA-Net/experiments/results/figures"
 os.makedirs(OUT_DIR, exist_ok=True)
 
-# ── 색상 팔레트 ──────────────────────────────────────────────────────────────
 CELL_COLORS = [
     '#E74C3C', '#E67E22', '#2ECC71', '#1ABC9C',
     '#3498DB', '#9B59B6', '#F1C40F', '#EC407A',
 ]
-C_DENSE  = '#C0392B'
-C_GVLA   = '#1A9E94'
-C_ARROW  = '#555555'
+C_DENSE     = '#C0392B'
+C_GVLA      = '#1A9E94'
 C_HYPERPLANE = ['#1A9E94', '#C0392B', '#B07D00']
+W3 = torch.eye(3)
 
-W3 = torch.eye(3)   # 3 orthogonal hyperplanes in 3D
+
+# ── 공용 점 (패널 2, 3 동일 사용) ────────────────────────────────────────────
+def make_points(n=500):
+    torch.manual_seed(99)
+    pts = torch.randn(n, 3)
+    pts = pts / (pts.norm(dim=1, keepdim=True) * 1.15)
+    codes = ((pts @ W3.T) > 0).int()
+    colors = [CELL_COLORS[int(c[0])*4 + int(c[1])*2 + int(c[2])] for c in codes]
+    return pts, codes, colors
+
+SHARED_PTS, SHARED_CODES, SHARED_COLORS = make_points(500)
 
 
-# ── Panel 1: Dense — M개 화살표 ──────────────────────────────────────────────
-def draw_dense(ax, M=24):
-    """2D: latent node z → M output nodes, fan of arrows"""
-    ax.set_xlim(-0.3, 3.5)
-    ax.set_ylim(-1.2, 1.2)
+# ── Panel 1: Dense ───────────────────────────────────────────────────────────
+def draw_dense(ax, M=28):
+    ax.set_xlim(-0.3, 3.6)
+    ax.set_ylim(-1.25, 1.25)
     ax.axis('off')
 
     # latent node
-    circ_z = plt.Circle((0, 0), 0.18, color='#34495E', zorder=5)
-    ax.add_patch(circ_z)
+    ax.add_patch(plt.Circle((0, 0), 0.18, color='#34495E', zorder=5))
     ax.text(0, 0, '$z$', ha='center', va='center',
             fontsize=13, color='white', fontweight='bold', zorder=6)
 
-    # M output nodes evenly spaced vertically
-    y_positions = np.linspace(-1.05, 1.05, M)
+    # M output nodes + arrows
+    y_positions = np.linspace(-1.1, 1.1, M)
     for i, y in enumerate(y_positions):
-        # arrow z → node
-        alpha = 0.25 + 0.15 * abs(math.sin(i))
-        ax.annotate('', xy=(2.7, y), xytext=(0.18, 0),
+        alpha = 0.20 + 0.18 * abs(math.sin(i * 0.7))
+        ax.annotate('', xy=(2.72, y), xytext=(0.18, 0),
                     arrowprops=dict(arrowstyle='->', color=C_DENSE,
-                                    lw=0.9, alpha=alpha))
-        # output node
-        c = plt.Circle((2.85, y), 0.055,
-                        color=C_DENSE, alpha=0.55 + 0.3 * (i % 3 == 0), zorder=4)
-        ax.add_patch(c)
+                                    lw=0.85, alpha=alpha))
+        ax.add_patch(plt.Circle((2.86, y), 0.052,
+                                color=C_DENSE,
+                                alpha=0.45 + 0.35*(i % 4 == 0), zorder=4))
 
-    # labels
-    ax.text(0, -1.15, 'latent $z$\n($d$-dim)', ha='center', va='top',
-            fontsize=9, color='#333333')
-    ax.text(3.1, 0, f'$M$ logits\n({M} shown)', ha='left', va='center',
+    ax.text(0, -1.2, 'latent $z$', ha='center', va='top',
+            fontsize=9, color='#444')
+    ax.text(3.22, 0, f'$M$ logits', ha='left', va='center',
             fontsize=9, color=C_DENSE)
-    ax.text(1.4, 1.18, f'$M$ operations\n→ score every class',
-            ha='center', va='bottom', fontsize=9.5, color='#555555',
-            style='italic')
+    ax.text(1.38, 1.22, 'score every class — $O(dM)$',
+            ha='center', va='bottom', fontsize=9, color='#666', style='italic')
 
-    # complexity badge
-    ax.text(1.35, -1.15, r'$\mathcal{O}(dM)$',
-            ha='center', va='top', fontsize=13, color=C_DENSE,
-            fontweight='bold',
+    ax.text(1.38, -1.22, r'$\mathcal{O}(dM)$',
+            ha='center', va='top', fontsize=14, color=C_DENSE, fontweight='bold',
             bbox=dict(boxstyle='round,pad=0.35', facecolor='#FDECEA',
                       edgecolor=C_DENSE, linewidth=1.5))
 
     ax.set_title('Dense Head\n(softmax over $M$ bins)',
-                 fontsize=12, color='#111111', fontweight='bold', pad=10)
+                 fontsize=12, color='#111', fontweight='bold', pad=10)
 
 
-# ── Panel 2: Geometric routing — hyperplane + 화살표 ─────────────────────────
+# ── Panel 2: GVLA routing ────────────────────────────────────────────────────
 def draw_routing(ax):
-    """3D: k=3 hyperplanes, query points → routing arrows to octant centers"""
-    lim = 1.5
-    g   = np.linspace(-lim, lim, 25)
+    lim = 1.55
+    g   = np.linspace(-lim, lim, 26)
     G1, G2 = np.meshgrid(g, g)
     Z0 = np.zeros_like(G1)
 
-    plane_alpha = 0.13
-    ax.plot_surface(G1, G2, Z0,
-                    color=C_HYPERPLANE[0], alpha=plane_alpha, shade=False)
-    ax.plot_surface(G1, Z0, G2,
-                    color=C_HYPERPLANE[1], alpha=plane_alpha, shade=False)
-    ax.plot_surface(Z0, G1, G2,
-                    color=C_HYPERPLANE[2], alpha=plane_alpha, shade=False)
+    # hyperplanes
+    for col, surf in zip(C_HYPERPLANE,
+                         [(G1,G2,Z0),(G1,Z0,G2),(Z0,G1,G2)]):
+        ax.plot_surface(*surf, color=col, alpha=0.10, shade=False)
 
-    # Hyperplane normal vectors (small arrows at origin)
-    for i, (dx, dy, dz) in enumerate([(0, 0, 0.7), (0, 0.7, 0), (0.7, 0, 0)]):
-        ax.quiver(0, 0, 0, dx, dy, dz,
-                  color=C_HYPERPLANE[i], linewidth=2.0,
-                  arrow_length_ratio=0.3, alpha=0.85)
+    # hyperplane 법선
+    for i,(dx,dy,dz) in enumerate([(0,0,0.78),(0,0.78,0),(0.78,0,0)]):
+        ax.quiver(0,0,0,dx,dy,dz, color=C_HYPERPLANE[i],
+                  linewidth=2.3, arrow_length_ratio=0.28, alpha=0.92)
 
-    # query points — 선별해서 8개 (각 octant 하나씩)
-    torch.manual_seed(17)
-    raw = torch.randn(200, 3)
-    raw = raw / raw.norm(dim=1, keepdim=True)
-    codes_all = ((raw @ W3.T) > 0).int()
-    # pick one representative per octant
-    query_pts, query_codes = [], []
-    for c0 in range(2):
-        for c1 in range(2):
-            for c2 in range(2):
-                target = torch.tensor([c0, c1, c2])
-                for i in range(len(codes_all)):
-                    if (codes_all[i] == target).all():
-                        query_pts.append(raw[i])
-                        query_codes.append(codes_all[i])
-                        break
+    pts = SHARED_PTS
+    # 전체 점 — 회색 (아직 정렬 전)
+    ax.scatter(pts[:,0].numpy(), pts[:,1].numpy(), pts[:,2].numpy(),
+               c='#BBBBBB', s=7, alpha=0.30, zorder=2)
 
-    octant_center = lambda c: torch.tensor([
-        0.75 if c[0] else -0.75,
-        0.75 if c[1] else -0.75,
-        0.75 if c[2] else -0.75,
-    ])
+    # 각 octant에서 선택된 점만 컬러 화살표
+    octant_center = lambda c0,c1,c2: np.array([
+        0.85 if c0 else -0.85,
+        0.85 if c1 else -0.85,
+        0.85 if c2 else -0.85,
+    ], dtype=float)
 
-    for pt, code in zip(query_pts, query_codes):
-        idx = code[0] * 4 + code[1] * 2 + code[2]
-        col = CELL_COLORS[idx]
-        ax.scatter(*pt.tolist(), color=col, s=55, zorder=5, alpha=0.95,
-                   edgecolors='white', linewidths=0.6)
-        center = octant_center(code)
-        dp = center * 0.72 - pt
-        ax.quiver(*pt.tolist(), *dp.tolist(),
-                  color=col, alpha=0.75, linewidth=1.5,
-                  arrow_length_ratio=0.28, normalize=False)
+    np.random.seed(7)
+    for cell_idx in range(8):
+        c0 = cell_idx // 4
+        c1 = (cell_idx // 2) % 2
+        c2 = cell_idx % 2
+        mask = np.array([
+            (int(SHARED_CODES[i][0])==c0 and
+             int(SHARED_CODES[i][1])==c1 and
+             int(SHARED_CODES[i][2])==c2)
+            for i in range(len(SHARED_CODES))
+        ])
+        idxs = np.where(mask)[0]
+        chosen = np.random.choice(idxs, size=min(12, len(idxs)), replace=False)
+        col = CELL_COLORS[cell_idx]
+        center = octant_center(c0, c1, c2)
 
-    ax.set_xlim(-lim, lim)
-    ax.set_ylim(-lim, lim)
-    ax.set_zlim(-lim, lim)
-    ax.set_xlabel('$x$', fontsize=9, color='#333333', labelpad=0)
-    ax.set_ylabel('$y$', fontsize=9, color='#333333', labelpad=0)
-    ax.set_zlabel('$z$', fontsize=9, color='#333333', labelpad=0)
-    ax.tick_params(labelsize=6, colors='#666666')
-    for pane in (ax.xaxis.pane, ax.yaxis.pane, ax.zaxis.pane):
-        pane.fill = True
-        pane.set_facecolor('#F7F7F7')
-    ax.set_title('GVLA: $k$ Binary Questions\n(each hyperplane asks 1 bit)',
-                 fontsize=12, color='#111111', fontweight='bold', pad=8)
+        for i in chosen:
+            pt = pts[i].numpy()
+            dp = center * 0.80 - pt
+            ax.scatter(*pt, color=col, s=20, alpha=0.88,
+                       zorder=5, edgecolors='white', linewidths=0.3)
+            ax.quiver(*pt, *dp, color=col, alpha=0.55,
+                      linewidth=0.9, arrow_length_ratio=0.22, normalize=False)
 
-    ax.text2D(0.5, -0.04,
-              r'$\mathcal{O}(d \log M)$',
-              transform=ax.transAxes, ha='center', fontsize=13,
+    ax.set_xlim(-lim,lim); ax.set_ylim(-lim,lim); ax.set_zlim(-lim,lim)
+    for axis, label in zip([ax.xaxis,ax.yaxis,ax.zaxis],['$x$','$y$','$z$']):
+        axis.pane.fill = True
+        axis.pane.set_facecolor('#F4F4F4')
+    ax.set_xlabel('$x$', fontsize=9, color='#444', labelpad=0)
+    ax.set_ylabel('$y$', fontsize=9, color='#444', labelpad=0)
+    ax.set_zlabel('$z$', fontsize=9, color='#444', labelpad=0)
+    ax.tick_params(labelsize=6, colors='#888')
+
+    ax.set_title('GVLA: $k$ Binary Questions\n(each hyperplane → 1 bit)',
+                 fontsize=12, color='#111', fontweight='bold', pad=8)
+    ax.text2D(0.5, -0.04, r'$\mathcal{O}(d\log M)$',
+              transform=ax.transAxes, ha='center', fontsize=14,
               color=C_GVLA, fontweight='bold',
               bbox=dict(boxstyle='round,pad=0.35', facecolor='#E8F8F5',
                         edgecolor=C_GVLA, linewidth=1.5))
 
 
-# ── Panel 3: 결과 — 이쁘게 쪼개진 8개 octant ────────────────────────────────
+# ── Panel 3: 결과 ─────────────────────────────────────────────────────────────
 def draw_cells(ax):
-    """3D: 8 octants filled with colored volumes"""
-    lim = 1.4
-    delta = 0.015   # small gap between cells
+    lim = 1.48
+    delta = 0.02
 
-    octants = []
-    for sx in (-1, 1):
-        for sy in (-1, 1):
-            for sz in (-1, 1):
-                # vertices of the octant cube
-                x0 = delta if sx > 0 else -lim
-                x1 = lim   if sx > 0 else -delta
-                y0 = delta if sy > 0 else -lim
-                y1 = lim   if sy > 0 else -delta
-                z0 = delta if sz > 0 else -lim
-                z1 = lim   if sz > 0 else -delta
-                octants.append(((x0, x1), (y0, y1), (z0, z1)))
-
-    for i, ((x0,x1),(y0,y1),(z0,z1)) in enumerate(octants):
-        col = CELL_COLORS[i]
-        # 6 faces
+    # 반투명 octant 블록
+    for cell_idx in range(8):
+        c0 = cell_idx // 4
+        c1 = (cell_idx // 2) % 2
+        c2 = cell_idx % 2
+        sx,sy,sz = (1 if c0 else -1),(1 if c1 else -1),(1 if c2 else -1)
+        x0 = delta if sx>0 else -lim;  x1 = lim if sx>0 else -delta
+        y0 = delta if sy>0 else -lim;  y1 = lim if sy>0 else -delta
+        z0 = delta if sz>0 else -lim;  z1 = lim if sz>0 else -delta
+        col = CELL_COLORS[cell_idx]
         faces = [
-            [[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0]],  # bottom
-            [[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]],  # top
-            [[x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1]],  # front
-            [[x0,y1,z0],[x1,y1,z0],[x1,y1,z1],[x0,y1,z1]],  # back
-            [[x0,y0,z0],[x0,y1,z0],[x0,y1,z1],[x0,y0,z1]],  # left
-            [[x1,y0,z0],[x1,y1,z0],[x1,y1,z1],[x1,y0,z1]],  # right
+            [[x0,y0,z0],[x1,y0,z0],[x1,y1,z0],[x0,y1,z0]],
+            [[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]],
+            [[x0,y0,z0],[x1,y0,z0],[x1,y0,z1],[x0,y0,z1]],
+            [[x0,y1,z0],[x1,y1,z0],[x1,y1,z1],[x0,y1,z1]],
+            [[x0,y0,z0],[x0,y1,z0],[x0,y1,z1],[x0,y0,z1]],
+            [[x1,y0,z0],[x1,y1,z0],[x1,y1,z1],[x1,y0,z1]],
         ]
-        poly = Poly3DCollection(faces, alpha=0.38, linewidth=0.4,
+        poly = Poly3DCollection(faces, alpha=0.20, linewidth=0.3,
                                 edgecolor='white')
         poly.set_facecolor(col)
         ax.add_collection3d(poly)
 
-        # cell center dot + bit label
-        cx = (x0+x1)/2; cy = (y0+y1)/2; cz = (z0+z1)/2
-        ax.scatter(cx, cy, cz, color=col, s=40, zorder=6,
-                   edgecolors='white', linewidths=0.8, alpha=0.95)
-        bits = format(i, '03b')
-        ax.text(cx, cy, cz + 0.18, bits,
-                ha='center', va='bottom', fontsize=7.5,
-                color='#222222', fontweight='bold')
+    # 같은 점들 — 이제 컬러로 뚜렷하게
+    pts = SHARED_PTS
+    ax.scatter(pts[:,0].numpy(), pts[:,1].numpy(), pts[:,2].numpy(),
+               c=SHARED_COLORS, s=14, alpha=0.85,
+               zorder=5, edgecolors='white', linewidths=0.2)
 
-    ax.set_xlim(-lim, lim)
-    ax.set_ylim(-lim, lim)
-    ax.set_zlim(-lim, lim)
-    ax.set_xlabel('$x$', fontsize=9, color='#333333', labelpad=0)
-    ax.set_ylabel('$y$', fontsize=9, color='#333333', labelpad=0)
-    ax.set_zlabel('$z$', fontsize=9, color='#333333', labelpad=0)
-    ax.tick_params(labelsize=6, colors='#666666')
-    for pane in (ax.xaxis.pane, ax.yaxis.pane, ax.zaxis.pane):
-        pane.fill = True
-        pane.set_facecolor('#F7F7F7')
-    ax.set_title('Result: $2^k$ Clean Cells\n($k=3$ → 8 distinct regions)',
-                 fontsize=12, color='#111111', fontweight='bold', pad=8)
+    # bit label
+    for cell_idx in range(8):
+        c0 = cell_idx // 4
+        c1 = (cell_idx // 2) % 2
+        c2 = cell_idx % 2
+        cx = 0.74*(1 if c0 else -1)
+        cy = 0.74*(1 if c1 else -1)
+        cz = 0.74*(1 if c2 else -1)
+        ax.text(cx, cy, cz+0.22, format(cell_idx,'03b'),
+                ha='center', va='bottom', fontsize=8,
+                color='#222', fontweight='bold', zorder=6)
 
+    ax.set_xlim(-lim,lim); ax.set_ylim(-lim,lim); ax.set_zlim(-lim,lim)
+    for axis in [ax.xaxis,ax.yaxis,ax.zaxis]:
+        axis.pane.fill = True
+        axis.pane.set_facecolor('#F4F4F4')
+    ax.set_xlabel('$x$', fontsize=9, color='#444', labelpad=0)
+    ax.set_ylabel('$y$', fontsize=9, color='#444', labelpad=0)
+    ax.set_zlabel('$z$', fontsize=9, color='#444', labelpad=0)
+    ax.tick_params(labelsize=6, colors='#888')
+
+    ax.set_title('Result: $2^k$ Clean Cells\n(same 500 points, now perfectly sorted)',
+                 fontsize=12, color='#111', fontweight='bold', pad=8)
     ax.text2D(0.5, -0.04,
-              '$k$ bits → $2^k$ cells\n(exponential capacity)',
+              '$k$ bits → $2^k$ cells  (exponential capacity)',
               transform=ax.transAxes, ha='center', fontsize=9.5,
-              color='#333333', style='italic')
+              color='#444', style='italic')
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -238,30 +230,26 @@ def make_fig(suffix='_paper', dpi=300):
     ax2 = fig.add_subplot(132, projection='3d')
     ax3 = fig.add_subplot(133, projection='3d')
 
-    ax2.view_init(elev=22, azim=35)
-    ax3.view_init(elev=22, azim=35)
+    ax2.view_init(elev=22, azim=38)
+    ax3.view_init(elev=22, azim=38)
 
     draw_dense(ax1)
     draw_routing(ax2)
     draw_cells(ax3)
 
-    # ── 화살표로 패널 연결 ─────────────────────────────────────────────────
     for x in [0.345, 0.665]:
-        fig.text(x, 0.52, '→', fontsize=28, color='#AAAAAA',
+        fig.text(x, 0.50, '→', fontsize=30, color='#BBBBBB',
                  ha='center', va='center', fontweight='bold')
 
-    fig.suptitle(
-        'GVLA: From Exhaustive Scoring to Geometric Routing',
-        fontsize=14, fontweight='bold', color='#111111', y=1.02,
-    )
+    fig.suptitle('GVLA: From Exhaustive Scoring to Geometric Routing',
+                 fontsize=14, fontweight='bold', color='#111', y=1.02)
     fig.text(
         0.5, -0.04,
-        r'Dense scores all $M$ classes ($\mathcal{O}(dM)$)  '
-        r'$\;\longrightarrow\;$  '
-        r'GVLA asks $k = \lceil\log_2 M\rceil$ binary questions ($\mathcal{O}(d\log M)$)  '
-        r'$\;\longrightarrow\;$  '
-        r'$2^k$ clean geometric cells',
-        ha='center', fontsize=10, color='#555555', style='italic',
+        r'Dense scores all $M$ classes $(\mathcal{O}(dM))$'
+        r'$\;\longrightarrow\;$ GVLA asks $k=\lceil\log_2 M\rceil$ binary questions'
+        r'$\;(\mathcal{O}(d\log M))$'
+        r'$\;\longrightarrow\;$ $2^k$ clean geometric cells',
+        ha='center', fontsize=10, color='#555', style='italic',
     )
 
     plt.tight_layout(rect=[0, 0, 1, 1])
