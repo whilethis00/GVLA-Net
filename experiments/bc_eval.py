@@ -165,6 +165,7 @@ def eval_checkpoint(ckpt_path: Path, config_path: Path,
         head_type=cfg["head"],
         n_bins=cfg["n_bins"],
         latent_dim=cfg.get("latent_dim", 256),
+        gray_code=cfg.get("gray_code", False),
     ).to(device)
     policy.load_state_dict(torch.load(ckpt_path, map_location=device))
     policy.eval()

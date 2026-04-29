@@ -4,6 +4,13 @@ __pycache__/
 experiments/results/*
 !experiments/results/universal_vla_comparison/
 !experiments/results/robosuite_study/
+!experiments/results/bc_study/
+experiments/results/bc_study/*
+!experiments/results/bc_study/EXPERIMENTS.md
+!experiments/results/bc_study/eval_results.json
+!experiments/results/bc_study/figures/
+experiments/results/bc_study/figures/*
+!experiments/results/bc_study/figures/*.png
 experiments/results/robosuite_study/*
 !experiments/results/robosuite_study/*.json
 !experiments/results/robosuite_study/*.png

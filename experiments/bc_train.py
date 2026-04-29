@@ -115,26 +115,48 @@ def quantize_action(action: torch.Tensor, n_bins: int) -> torch.Tensor:
     return idx
 
 
-def action_to_binary(bin_idx: torch.Tensor, k: int) -> torch.Tensor:
-    """Bin index → k-bit binary code (MSB first).  shape: (..., action_dim, k)."""
-    # bin_idx: (..., action_dim)
+def int_to_gray(n: torch.Tensor) -> torch.Tensor:
+    """Natural binary index → Gray code index.  n ^ (n >> 1)."""
+    return n ^ (n >> 1)
+
+
+def gray_to_int(g: torch.Tensor) -> torch.Tensor:
+    """Gray code index → natural binary index (iterative XOR fold)."""
+    # work bit-by-bit from MSB; max 20 bits covers M up to 1M
+    n = g.clone()
+    mask = n >> 1
+    while mask.any():
+        n = n ^ mask
+        mask = mask >> 1
+    return n
+
+
+def action_to_binary(bin_idx: torch.Tensor, k: int,
+                     gray_code: bool = False) -> torch.Tensor:
+    """Bin index → k-bit code (MSB first).  shape: (..., action_dim, k).
+
+    gray_code=True  : encodes via Gray code (adjacent bins differ by 1 bit)
+    gray_code=False : natural binary (default, backward-compatible)
+    """
+    idx = int_to_gray(bin_idx) if gray_code else bin_idx
     bits = []
     for i in range(k - 1, -1, -1):
-        bits.append((bin_idx >> i) & 1)
-    # stack along last dim → (..., action_dim, k)
+        bits.append((idx >> i) & 1)
     return torch.stack(bits, dim=-1).float()
 
 
-def binary_to_action(binary: torch.Tensor, n_bins: int) -> torch.Tensor:
-    """k-bit binary code → continuous action.  binary: (..., action_dim, k)."""
+def binary_to_action(binary: torch.Tensor, n_bins: int,
+                     gray_code: bool = False) -> torch.Tensor:
+    """k-bit code → continuous action.  binary: (..., action_dim, k)."""
     k = binary.shape[-1]
     powers = torch.tensor(
         [2 ** (k - 1 - i) for i in range(k)],
         dtype=torch.long, device=binary.device,
     )
-    # round to 0/1 first
     hard = (binary > 0.5).long()
-    bin_idx = (hard * powers).sum(-1).clamp(0, n_bins - 1)   # (..., action_dim)
+    code_idx = (hard * powers).sum(-1).clamp(0, n_bins - 1)
+    bin_idx = gray_to_int(code_idx) if gray_code else code_idx
+    bin_idx = bin_idx.clamp(0, n_bins - 1)
     return (bin_idx.float() + 0.5) / n_bins * 2.0 - 1.0
 
 
@@ -186,11 +208,13 @@ class DenseHead(nn.Module):
 class GVLAHead(nn.Module):
     """7 OrthogonalProjectionLayers, one per action dimension.  O(log n_bins) per dim."""
 
-    def __init__(self, latent_dim: int, action_dim: int, n_bins: int):
+    def __init__(self, latent_dim: int, action_dim: int, n_bins: int,
+                 gray_code: bool = False):
         super().__init__()
         self.n_bins = n_bins
         self.action_dim = action_dim
         self.k = math.ceil(math.log2(max(n_bins, 2)))
+        self.gray_code = gray_code
         self.heads = nn.ModuleList([
             OrthogonalProjectionLayer(latent_dim, n_bins)
             for _ in range(action_dim)
@@ -205,9 +229,10 @@ class GVLAHead(nn.Module):
         out_list = self.forward(z)
         parts = []
         for out in out_list:
-            cont = binary_to_action(out["binary_code"], self.n_bins)   # (B,)
+            cont = binary_to_action(out["binary_code"], self.n_bins,
+                                    gray_code=self.gray_code)
             parts.append(cont)
-        return torch.stack(parts, dim=-1)                              # (B, action_dim)
+        return torch.stack(parts, dim=-1)
 
     def orthogonality_loss(self) -> torch.Tensor:
         return sum(h.orthogonality_loss() for h in self.heads)
@@ -217,16 +242,19 @@ class BCPolicy(nn.Module):
     """Full BC policy = backbone + head."""
 
     def __init__(self, obs_dim: int, action_dim: int,
-                 head_type: str, n_bins: int, latent_dim: int = 256):
+                 head_type: str, n_bins: int, latent_dim: int = 256,
+                 gray_code: bool = False):
         super().__init__()
         self.head_type = head_type
         self.n_bins = n_bins
         self.action_dim = action_dim
+        self.gray_code = gray_code
         self.backbone = Backbone(obs_dim, latent_dim)
         if head_type == "dense":
             self.head = DenseHead(latent_dim, action_dim, n_bins)
         elif head_type == "gvla":
-            self.head = GVLAHead(latent_dim, action_dim, n_bins)
+            self.head = GVLAHead(latent_dim, action_dim, n_bins,
+                                 gray_code=gray_code)
         else:
             raise ValueError(f"Unknown head_type: {head_type}")
 
@@ -262,7 +290,8 @@ def compute_loss(policy: BCPolicy, obs: torch.Tensor,
     elif policy.head_type == "gvla":
         k = policy.head.k
         bin_targets = quantize_action(action, n_bins)           # (B, action_dim)
-        bin_codes = action_to_binary(bin_targets, k)            # (B, action_dim, k)
+        bin_codes = action_to_binary(bin_targets, k,
+                                     gray_code=policy.gray_code)  # (B, action_dim, k)
         out_list = policy(obs)                                   # list of dicts
         bce = nn.BCEWithLogitsLoss()
         loss = 0.0
@@ -294,7 +323,8 @@ def train(args):
     policy = BCPolicy(obs_dim, action_dim,
                       head_type=args.head,
                       n_bins=args.n_bins,
-                      latent_dim=args.latent_dim).to(device)
+                      latent_dim=args.latent_dim,
+                      gray_code=args.gray_code).to(device)
     total_params = sum(p.numel() for p in policy.parameters())
     print(f"Model: {args.head} head, n_bins={args.n_bins}, "
           f"params={total_params:,}")
@@ -369,6 +399,8 @@ def main():
     parser.add_argument("--exp_name", type=str, required=True)
     parser.add_argument("--out_dir", type=str,
                         default="experiments/results/bc_study/checkpoints")
+    parser.add_argument("--gray_code", action="store_true",
+                        help="Use Gray code encoding for GVLA head (default: natural binary)")
     args = parser.parse_args()
     train(args)
 

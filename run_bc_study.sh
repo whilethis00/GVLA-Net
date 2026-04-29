@@ -31,6 +31,7 @@ echo " GVLA-Net BC Study: Dense vs GVLA heads"
 echo "============================================"
 
 # ── Training sweep ────────────────────────────────────────────────────────
+# dense & gvla (natural binary)
 for HEAD in dense gvla; do
     for M in 8 16 32 64 128 256 512 1024; do
         EXP="${HEAD}_${M}"
@@ -44,6 +45,21 @@ for HEAD in dense gvla; do
             --exp_name "$EXP" \
             --out_dir "$CKPT_DIR"
     done
+done
+
+# gvla + gray code (ablation)
+for M in 8 16 32 64 128 256 512 1024; do
+    EXP="gvla_gray_${M}"
+    echo ""
+    echo "[TRAIN] head=gvla  M=$M  gray_code=True  exp=$EXP"
+    $PYTHON experiments/bc_train.py \
+        --data "$DATA" \
+        --head gvla \
+        --n_bins "$M" \
+        --epochs "$EPOCHS" \
+        --exp_name "$EXP" \
+        --out_dir "$CKPT_DIR" \
+        --gray_code
 done
 
 echo ""
