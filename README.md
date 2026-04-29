@@ -456,6 +456,10 @@ This is the sense in which orthogonality supports logarithmic decoding under an 
 
 물리 시뮬레이터를 쓰지 않고도, 대규모 action codebook에서 각 방법이 얼마나 효율적으로 공간을 쓰는지 직접 측정하는 proxy test를 추가했습니다. 비교군은 `PQ`, `LSH (Random Projection)`, `GVLA-Net (Ours)`이며, 고정 예산 `N=2^{20}` actions에서 `20/22/24 bit` 코드를 사용했습니다.
 
+![Pareto Efficiency](experiments/results/figures/fig_pareto_efficiency.png)
+
+위 산점도는 같은 결과를 더 직관적으로 보여줍니다. 왼쪽일수록 빠르고, 위쪽일수록 더 많은 action이 충돌 없이 서로 다른 code를 차지합니다. 즉, **왼쪽 위가 가장 좋은 영역**입니다. `LSH`는 상대적으로 빠른 편이지만 아래쪽에 머물러 collision이 많고, `PQ`는 위쪽까지 올라가지만 오른쪽으로 멀어 latency 비용이 큽니다. 반면 `GVLA-Net`은 여러 bit budget에 걸쳐 왼쪽 위 frontier를 형성해, **속도와 code utilization을 동시에 잡는다**는 점을 보여줍니다.
+
 핵심 결과는 다음과 같습니다.
 
 | Method | Bits | Collision Rate | Occupancy Efficiency | Recon. MSE | Total ms |
@@ -493,6 +497,46 @@ This is the sense in which orthogonality supports logarithmic decoding under an 
 | GVLA w/o Orthogonal Reg. | 24 | 0.2113 | 0.6303 | 0.5337 | 0.5173 |
 
 결과는 매우 일관적입니다. 직교성 제약을 제거하면 행 간 상관이 커지고(`mean |cos| \approx 0.19\text{--}0.21`), occupancy efficiency가 급격히 붕괴합니다. 특히 `24 bit`처럼 overcomplete budget에서도 `GVLA-Net`은 `collision=0.0604`, `occupancy efficiency=1.0001`을 유지하는 반면, `w/o orthogonality`는 `collision=0.6303`, `occupancy efficiency=0.5337`까지 무너집니다. 즉, 우리 모델의 핵심은 단순한 projection shell이 아니라, **직교성 자체가 해시 공간의 균형성과 대규모 action routing의 안정성을 만든다**는 점입니다.
+
+#### Correlation Sweep: 직교성이 조금씩 깨질 때 얼마나 빨리 무너지는가?
+
+> 산출물:
+> [Correlation Sweep CSV](/home/introai11/.agile/users/hsjung/projects/GVLA-Net/experiments/results/orthogonality_correlation_sweep/20260428_162314_proxy_corr_sweep/orthogonality_correlation_sweep.csv)
+> [Correlation Sweep MD](/home/introai11/.agile/users/hsjung/projects/GVLA-Net/experiments/results/orthogonality_correlation_sweep/20260428_162314_proxy_corr_sweep/orthogonality_correlation_sweep.md)
+> [Correlation Sweep TeX](/home/introai11/.agile/users/hsjung/projects/GVLA-Net/experiments/results/orthogonality_correlation_sweep/20260428_162314_proxy_corr_sweep/orthogonality_correlation_sweep.tex)
+
+위의 on/off 비교는 "직교성을 없애면 성능이 나빠진다"는 점을 보여줍니다. 하지만 리뷰어 입장에서는 한 가지 반론이 가능합니다. "그건 하이퍼파라미터 하나를 껐을 때 생긴 특수한 경우 아닌가?"  
+그래서 이번에는 더 방어적으로, 직교성을 한 번에 없애는 대신 **조금씩** 무너뜨려 보았습니다.
+
+여기서 `mix`는 projection row들끼리 얼마나 서로 닮아가도록 섞었는지를 뜻합니다.
+
+- `mix = 0.00`: 완전 직교. 각 bit가 서로 다른 질문을 함.
+- `mix ↑`: 질문들이 점점 비슷해짐. 서로 다른 bit가 사실상 같은 방향을 중복으로 묻게 됨.
+
+쉽게 말해, 원래는 24개의 bit가 "서로 다른 24개의 질문"을 해야 합니다. 그런데 직교성이 깨지면 그중 몇 개는 같은 질문을 반복하는 셈이 됩니다. 그러면 nominal하게는 여전히 `24 bit`여도, 실제로는 쓸 수 있는 정보량이 줄어들고, 결국 **서로 다른 action들이 같은 code에 몰리는 collision**이 급격히 늘어납니다.
+
+핵심 결과는 다음과 같습니다.
+
+| Mix | Mean \|cos\| | Collision Rate | Occupancy Efficiency | Unique Code Ratio | Recon. MSE |
+|------|-------------:|----------------|----------------------|-------------------|------------|
+| 0.00 | **0.0000** | **0.0604** | **1.0001** | **0.9695** | 0.031255 |
+| 0.15 | 0.1359 | 0.3878 | 0.7857 | 0.7617 | 0.031576 |
+| 0.30 | 0.1507 | 0.4591 | 0.7228 | 0.7006 | 0.031789 |
+| 0.45 | 0.1863 | 0.5769 | 0.5963 | 0.5781 | 0.032203 |
+| 0.60 | 0.1918 | 0.6528 | 0.5125 | 0.4968 | 0.032471 |
+| 0.75 | 0.2715 | 0.8100 | 0.3027 | 0.2934 | 0.031837 |
+| 0.90 | 0.7824 | 0.9433 | 0.0910 | 0.0882 | **0.029919** |
+
+이 표는 아주 직관적인 메시지를 줍니다.
+
+- `mean |cos|`가 커질수록 행들이 서로 비슷해집니다.
+- 그 순간부터 `collision rate`가 `0.0604 → 0.9433`까지 폭증합니다.
+- 동시에 `unique code ratio`는 `0.9695 → 0.0882`로 붕괴합니다.
+- 즉, codebook이 넓은 공간을 고르게 쓰지 못하고, 몇 개의 code에 action들이 몰리기 시작합니다.
+
+여기서 `reconstruction MSE`가 아주 크게 변하지 않는 것도 오히려 중요합니다. 이 sweep의 핵심은 "continuous prototype을 얼마나 잘 복원하느냐"보다, **binary routing 공간을 얼마나 균형 있게 쓰느냐**에 있습니다. 다시 말해, 문제의 본질은 단순한 reconstruction 품질이 아니라 **hash geometry의 붕괴**입니다.
+
+정리하면, 이 correlation sweep은 "직교성이 있으면 좋다" 정도의 약한 메시지가 아닙니다. 오히려 **직교성이 조금만 무너져도 code utilization이 연속적으로, 그리고 매우 빠르게 붕괴한다**는 점을 보여줍니다. 따라서 GVLA-Net의 강점은 단순히 projection layer를 썼다는 사실이 아니라, **서로 거의 직교한 binary questions를 유지한다는 점 자체**에 있습니다.
 
 ---
 

@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import csv
 import sys
 from pathlib import Path
 
@@ -10,6 +13,90 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 OUT_DIR = PROJECT_ROOT / "experiments" / "results" / "figures"
+TABLE_CSV = PROJECT_ROOT / "experiments" / "results" / "appendix_tables" / "action_codebook_proxy_table3.csv"
+
+STYLE = {
+    "GVLA-Net (Ours)": {
+        "color": "#9f1d35",
+        "marker": "o",
+        "linewidth": 2.8,
+        "linestyle": "-",
+        "filled": True,
+        "zorder": 5,
+    },
+    "LSH (Random Projection)": {
+        "color": "#5f6368",
+        "marker": "s",
+        "linewidth": 1.9,
+        "linestyle": (0, (4, 3)),
+        "filled": False,
+        "zorder": 4,
+    },
+    "PQ": {
+        "color": "#c77700",
+        "marker": "^",
+        "linewidth": 1.9,
+        "linestyle": (0, (5, 3)),
+        "filled": False,
+        "zorder": 4,
+    },
+}
+
+BIT_MARKER_SIZE = {20: 72, 22: 102, 24: 138}
+
+
+def load_rows() -> dict[str, list[dict[str, float | int | str]]]:
+    grouped: dict[str, list[dict[str, float | int | str]]] = {}
+    with TABLE_CSV.open() as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            method = str(row["method"])
+            parsed = {
+                "method": method,
+                "code_bits": int(row["code_bits"]),
+                "unique_code_ratio": float(row["unique_code_ratio"]),
+                "total_ms": float(row["total_ms"]),
+            }
+            grouped.setdefault(method, []).append(parsed)
+    for rows in grouped.values():
+        rows.sort(key=lambda item: int(item["code_bits"]))
+    return grouped
+
+
+def add_better_region(ax: plt.Axes) -> None:
+    ax.annotate(
+        "Better",
+        xy=(22.5, 0.975),
+        xytext=(34.0, 0.92),
+        color="#1d6f5f",
+        fontsize=11,
+        fontweight="bold",
+        arrowprops=dict(arrowstyle="-|>", color="#1d6f5f", lw=1.4, shrinkA=2, shrinkB=2),
+    )
+
+
+def add_point_labels(ax: plt.Axes, rows: list[dict[str, float | int | str]], method: str) -> None:
+    for row in rows:
+        x = float(row["total_ms"])
+        y = float(row["unique_code_ratio"])
+        bits = int(row["code_bits"])
+        label = f"{bits}b"
+
+        if method == "GVLA-Net (Ours)":
+            dx, dy = 1.025, 0.010
+        elif method == "LSH (Random Projection)":
+            dx, dy = 1.025, -0.020
+        else:
+            dx, dy = 1.025, 0.008
+
+        ax.text(
+            x * dx,
+            y + dy,
+            label,
+            color=STYLE[method]["color"],
+            fontsize=9,
+            fontweight="bold" if method == "GVLA-Net (Ours)" else "normal",
+        )
 
 
 def main() -> None:
@@ -21,106 +108,79 @@ def main() -> None:
             "font.size": 10,
             "axes.labelsize": 12,
             "axes.titlesize": 12,
-            "legend.fontsize": 10,
+            "legend.fontsize": 9.5,
             "xtick.labelsize": 10,
             "ytick.labelsize": 10,
         }
     )
 
-    data = {
-        "GVLA-Net (Ours)": {
-            "bits": ["20-bit", "22-bit", "24-bit"],
-            "latency_ms": [12.78, 21.52, 24.07],
-            "unique_ratio": [0.6325, 0.8852, 0.9695],
-            "color": "#d1495b",
-            "linestyle": "-",
-            "marker": "o",
-            "linewidth": 2.6,
-            "marker_sizes": [6.4, 7.8, 9.2],
-            "zorder": 4,
-        },
-        "LSH (Random Projection)": {
-            "bits": ["20-bit", "22-bit", "24-bit"],
-            "latency_ms": [24.78, 15.51, 21.25],
-            "unique_ratio": [0.3748, 0.5405, 0.7649],
-            "color": "#6c757d",
-            "linestyle": (0, (4, 3)),
-            "marker": "o",
-            "linewidth": 1.9,
-            "marker_sizes": [6.4, 7.8, 9.2],
-            "zorder": 3,
-        },
-        "Product Quantization (PQ)": {
-            "bits": ["20-bit", "24-bit"],
-            "latency_ms": [208.05, 262.38],
-            "unique_ratio": [0.6306, 0.9691],
-            "color": "#f4a261",
-            "linestyle": (0, (5, 3)),
-            "marker": "o",
-            "linewidth": 1.9,
-            "marker_sizes": [6.4, 9.2],
-            "zorder": 3,
-        },
-    }
+    grouped = load_rows()
+    fig, ax = plt.subplots(figsize=(7.8, 4.8))
 
-    fig, ax = plt.subplots(figsize=(7.4, 4.6))
+    for method, rows in grouped.items():
+        style = STYLE[method]
+        x = np.array([float(row["total_ms"]) for row in rows], dtype=float)
+        y = np.array([float(row["unique_code_ratio"]) for row in rows], dtype=float)
+        sizes = np.array([BIT_MARKER_SIZE[int(row["code_bits"])] for row in rows], dtype=float)
 
-    x_min, x_max = 9.0, 320.0
-    y_min, y_max = 0.0, 0.68
-
-    for method, spec in data.items():
-        x = np.array(spec["latency_ms"], dtype=float)
-        y = 1.0 - np.array(spec["unique_ratio"], dtype=float)
         ax.plot(
             x,
             y,
-            color=spec["color"],
-            linestyle=spec["linestyle"],
-            linewidth=spec["linewidth"],
-            label=method,
-            zorder=spec["zorder"],
+            color=style["color"],
+            linestyle=style["linestyle"],
+            linewidth=style["linewidth"],
+            zorder=style["zorder"],
         )
         ax.scatter(
             x,
             y,
-            s=np.square(np.array(spec["marker_sizes"]) * 1.9),
-            marker=spec["marker"],
-            facecolors="white" if method != "GVLA-Net (Ours)" else spec["color"],
-            edgecolors=spec["color"],
-            linewidths=1.5,
-            zorder=spec["zorder"] + 0.1,
+            s=sizes,
+            marker=style["marker"],
+            facecolors=style["color"] if style["filled"] else "white",
+            edgecolors=style["color"],
+            linewidths=1.6,
+            zorder=style["zorder"] + 0.1,
         )
+        add_point_labels(ax, rows, method)
+
+    add_better_region(ax)
 
     ax.set_xscale("log")
-    ax.set_xlim(x_min, x_max)
-    ax.set_ylim(y_min, y_max)
-    ax.set_xticks([10, 20, 50, 100, 200])
-    ax.set_xticklabels(["10", "20", "50", "100", "200"])
-    ax.set_xlabel("Encode Latency (ms)")
-    ax.set_ylabel("Collision Rate")
+    ax.set_xlim(18, 360)
+    ax.set_ylim(0.33, 1.02)
+    ax.set_xticks([20, 40, 80, 160, 320])
+    ax.set_xticklabels(["20", "40", "80", "160", "320"])
+    ax.set_xlabel("Total Latency (ms, log scale)")
+    ax.set_ylabel("Unique Code Ratio")
+    ax.set_title("Pareto Frontier: Fast Routing vs. Collision-Free Capacity")
 
     ax.grid(True, which="major", axis="both", linewidth=0.7, alpha=0.35)
     ax.grid(True, which="minor", axis="x", linewidth=0.4, alpha=0.18)
-    legend_handles = [
-        Line2D([0], [0], color="#d1495b", linestyle="-", linewidth=2.6, marker="o", markersize=6.6, markerfacecolor="#d1495b", markeredgecolor="#d1495b", label="GVLA-Net (Ours)"),
-        Line2D([0], [0], color="#6c757d", linestyle=(0, (4, 3)), linewidth=1.9, marker="o", markersize=6.6, markerfacecolor="white", markeredgecolor="#6c757d", label="LSH (Random Projection)"),
-        Line2D([0], [0], color="#f4a261", linestyle=(0, (5, 3)), linewidth=1.9, marker="o", markersize=6.6, markerfacecolor="white", markeredgecolor="#f4a261", label="Product Quantization (PQ)"),
-        Line2D([0], [0], marker="o", color="none", markerfacecolor="#666666", markeredgecolor="#666666", markersize=6.4, label="20b"),
-        Line2D([0], [0], marker="o", color="none", markerfacecolor="#666666", markeredgecolor="#666666", markersize=7.8, label="22b"),
-        Line2D([0], [0], marker="o", color="none", markerfacecolor="#666666", markeredgecolor="#666666", markersize=9.2, label="24b"),
-    ]
-    ax.legend(
-        handles=legend_handles,
-        loc="upper right",
-        bbox_to_anchor=(1.0, 1.0),
-        frameon=True,
-        fancybox=False,
-        edgecolor="#cccccc",
+    ax.text(
+        0.99,
+        0.02,
+        "Up = fewer collisions, Left = faster",
+        transform=ax.transAxes,
+        ha="right",
+        va="bottom",
+        fontsize=9,
+        color="#4d4d4d",
     )
+
+    legend_handles = [
+        Line2D([0], [0], color=STYLE["GVLA-Net (Ours)"]["color"], linestyle=STYLE["GVLA-Net (Ours)"]["linestyle"], linewidth=STYLE["GVLA-Net (Ours)"]["linewidth"], marker=STYLE["GVLA-Net (Ours)"]["marker"], markersize=7.0, markerfacecolor=STYLE["GVLA-Net (Ours)"]["color"], markeredgecolor=STYLE["GVLA-Net (Ours)"]["color"], label="GVLA-Net (Ours)"),
+        Line2D([0], [0], color=STYLE["LSH (Random Projection)"]["color"], linestyle=STYLE["LSH (Random Projection)"]["linestyle"], linewidth=STYLE["LSH (Random Projection)"]["linewidth"], marker=STYLE["LSH (Random Projection)"]["marker"], markersize=6.8, markerfacecolor="white", markeredgecolor=STYLE["LSH (Random Projection)"]["color"], label="LSH (Random Projection)"),
+        Line2D([0], [0], color=STYLE["PQ"]["color"], linestyle=STYLE["PQ"]["linestyle"], linewidth=STYLE["PQ"]["linewidth"], marker=STYLE["PQ"]["marker"], markersize=7.2, markerfacecolor="white", markeredgecolor=STYLE["PQ"]["color"], label="Product Quantization (PQ)"),
+        Line2D([0], [0], marker="o", color="none", markerfacecolor="#666666", markeredgecolor="#666666", markersize=5.5, label="20b"),
+        Line2D([0], [0], marker="o", color="none", markerfacecolor="#666666", markeredgecolor="#666666", markersize=7.0, label="22b"),
+        Line2D([0], [0], marker="o", color="none", markerfacecolor="#666666", markeredgecolor="#666666", markersize=8.2, label="24b"),
+    ]
+    ax.legend(handles=legend_handles, loc="lower right", frameon=True, fancybox=False, edgecolor="#cccccc")
 
     for spine in ("top", "right"):
         ax.spines[spine].set_visible(False)
 
+    fig.tight_layout()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     pdf_path = OUT_DIR / "fig_pareto_efficiency.pdf"
     png_path = OUT_DIR / "fig_pareto_efficiency.png"

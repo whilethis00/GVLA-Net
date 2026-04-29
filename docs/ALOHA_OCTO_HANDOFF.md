@@ -258,6 +258,136 @@ MUJOCO_GL=egl /home/introai11/.conda/envs/octo_jax39/bin/python /home/introai11/
 - **GVLA만 망한 게 아니다**
 - **baseline Octo finetune path 자체가 현재 성공률을 전혀 못 내고 있다**
 
+### 6.4 2026-04-28 eval script 추가 수정 사항
+
+이 문서 초안 작성 이후 `experiments/octo_aloha_eval.py`를 더 손봤다.
+
+핵심은 “baseline sanity check가 원본 Octo eval semantics와 다르게 돌아가고 있었다”는 점이다.
+
+수정 내용:
+
+- `task`별 ACT env 매핑 추가
+  - `AlohaTransferCube-v0` -> `sim_transfer_cube`
+  - `AlohaInsertion-v0` -> `sim_insertion`
+- env reset 시 object pose sampling을 task별로 맞춤
+  - transfer: cube pose
+  - insertion: peg + socket pose
+- language instruction도 task별로 분기
+- 가장 중요:
+  - 이전 로컬 eval은 model이 예측한 `50-step action chunk` 중 **첫 action 1개만 실행**하고 있었음
+  - 현재는 원본 Octo eval 의도에 맞게 **predicted chunk를 그대로 순차 실행**하도록 변경함
+
+즉, 적어도 지금의 baseline 실패는 예전처럼 “eval glue가 action chunk를 잘못 쓰고 있어서”라고 설명하기는 어려워졌다.
+
+### 6.5 runtime 환경 우회 사항
+
+현 머신에서는 checkpoint load 중 Orbax / etils가 파일 owner / group name lookup을 하다가 실패할 수 있었다.
+
+증상:
+
+- `pwd.getpwuid(): uid not found`
+- `grp.getgrgid(): gid not found`
+
+현재 `experiments/octo_aloha_eval.py`에는 이 환경에서만 필요한 lightweight fallback shim이 들어가 있다.
+
+또한 ACT의 `utils.py`가 `torch`를 import해서, eval에서 단순 pose sampler를 쓰는 것만으로도 `torch` 의존성이 생기던 문제를 피하려고:
+
+- cube / insertion pose sampling 함수를 eval script 내부로 로컬 복사함
+
+이건 실험 의미를 바꾸는 수정은 아니고, 현 서버에서 eval을 실제로 끝까지 돌리기 위한 runtime workaround다.
+
+### 6.6 최신 sanity / short-run 결과
+
+짧은 sanity run:
+
+- task: `AlohaTransferCube-v0`
+- checkpoint: `4999`
+- rollouts: `1`
+- max_steps: `10`
+
+결과:
+
+- baseline: `0%`
+- GVLA: `0%`
+
+중요한 점:
+
+- eval script는 이제 checkpoint load -> env 생성 -> rollout -> CSV 저장까지 정상 완료됨
+- baseline 첫 chunk action은 여전히 특정 축이 강하게 고정된 패턴을 보임
+
+### 6.7 최신 baseline repeat 결과
+
+명령:
+
+```bash
+MUJOCO_GL=egl /home/introai11/.conda/envs/octo_jax39/bin/python /home/introai11/.agile/users/hsjung/projects/GVLA-Net/experiments/octo_aloha_eval.py --checkpoint_path /home/introai11/.agile/users/hsjung/projects/GVLA-Net/checkpoints/octo_aloha/4999 --task AlohaTransferCube-v0 --rollouts 3 --max_steps 150 --seed 0 --gvla_bins 1024 --debug_action_steps 3
+```
+
+결과 CSV:
+
+- `experiments/results/octo_aloha_eval/20260428_154714_aloha_eval.csv`
+
+관측:
+
+- baseline `3/3` 실패
+- 각 episode 모두 `steps=150`으로 끝까지 감
+- GVLA도 `3/3` 실패
+- baseline 첫 chunk 시작 action 예시:
+  - `[-0.0001, -1.4635, 1.1852, 0.0004, 0.3356, -0.0080, -0.0182, -0.0036, ...]`
+
+해석:
+
+- baseline이 조기 success를 한 번도 만들지 못함
+- eval misuse를 고친 뒤에도 동일하므로, 현재 실패의 주원인을 단순 action scaling / single-step execution bug로 보기는 어려움
+- 이제는 실제로
+  - checkpoint quality 문제인지
+  - online feedback을 거의 못 써서 fixed-like action pattern으로 무너지는지
+  를 더 직접 봐야 한다
+
+### 6.8 최신 transition-level debug 결과
+
+`octo_aloha_eval.py`에 다음 디버그 로그를 추가했다.
+
+- `qpos_before`
+- `env_action`
+- `qpos_after`
+- `delta`
+- `reward`
+- `|dq|_mean`
+- `|a-q|_mean`
+
+짧은 확인:
+
+- task: `AlohaTransferCube-v0`
+- checkpoint: `4999`
+- rollouts: `1`
+- max_steps: `10`
+- debug_action_steps: `3`
+
+결과 CSV:
+
+- `experiments/results/octo_aloha_eval/20260428_155110_aloha_eval.csv`
+
+관측:
+
+- baseline은 **아예 안 움직이는 것이 아니다**
+- 초반 3 step에서 실제 qpos 변화가 꽤 큼
+  - step 0: `|dq|_mean ~= 0.1679`
+  - step 1: `|dq|_mean ~= 0.0671`
+  - step 2: `|dq|_mean ~= 0.0870`
+- 특히 몇몇 arm joint는 큰 폭으로 움직이지만 reward는 계속 `0.0`
+- 따라서 현재 failure mode는
+  - “정지”
+  - 보다는 **움직이지만 task-relevant한 방향으로 수렴하지 못함**
+  쪽으로 보는 게 맞다
+
+GVLA도 마찬가지로 reward는 `0.0`이며, baseline보다 action이 더 포화된 형태를 보인다.
+
+이 시점의 실무적 해석은:
+
+- baseline policy가 online feedback을 잘 활용하지 못하고
+- 유사한 잘못된 maneuver를 반복하고 있을 가능성이 높다
+
 ## 7. 지금까지 배제된 가설
 
 다음은 “유력 원인”이 아니거나, 적어도 단독 원인으로 보기 어렵다.
@@ -309,8 +439,12 @@ MUJOCO_GL=egl /home/introai11/.conda/envs/octo_jax39/bin/python /home/introai11/
 
 - `agent_pos == state`라 가정했지만, 실제로는 다른 representation일 수 있음
 - action이 absolute target인지, current qpos와 조합해 써야 하는지
-- rollout에서 첫 action만 쓰는 방식이 task에 불리할 수 있음
 - ALOHA env의 reward/success semantics를 충분히 반영하지 못했을 수 있음
+
+주의:
+
+- `rollout에서 첫 action만 쓰는 방식`은 **이제 현재 코드 기준으로는 수정된 상태**다
+- 따라서 이 항목은 “과거 유력 원인”이었고, 최신 기준에서는 이미 어느 정도 배제된 가설로 봐야 한다
 
 ### 가설 3. checkpoint가 policy collapse 상태다
 
@@ -371,6 +505,15 @@ GVLA 빼고:
 - gripper만 움직이는지
 - 특정 arm만 고정되는지
 
+업데이트:
+
+- 이 우선순위는 지금도 맞다
+- 다음 에이전트는 여기서 한 단계 더 나가서
+  - **chunk 내부 step별 reward**
+  - **qpos before/after**
+  - **첫 2~3개 action chunk의 변화량**
+  를 로그로 남기면 좋다
+
 ### 9.3 dataset/action semantics 재검증
 
 확인할 것:
@@ -419,10 +562,122 @@ for ckpt in 999 1999 2999 3999 4999; do echo "===== CKPT $ckpt ====="; MUJOCO_GL
 
 - 지금 ALOHA 경로는 “완전 무의미”한 건 아니다.
 - 실제로 finetune은 되었고, rollout도 돌고, action/obs 디버깅도 가능하다.
-- 하지만 **baseline조차 0% success**이므로, 이 상태를 논문 메인 결과로 쓰면 안 된다.
+- eval의 큰 mismatch 하나였던 `single-action execution`은 수정됐지만, 그 뒤에도 **baseline조차 0% success**다.
+- 따라서 이 상태를 논문 메인 결과로 쓰면 안 된다.
 - 따라서 다음 에이전트의 목표는:
   - `GVLA`를 평가하는 것 이전에
   - **baseline Octo ALOHA reproduction을 살리는 것**
   이다.
 
 이게 살아나야 그 다음에 baseline vs GVLA 비교가 의미가 생긴다.
+
+## 12. 2026-04-28 추가 업데이트
+
+이번 세션에서 `horizon`과 `window_size`를 줄여가며 추가 sanity check를 수행했다.
+
+### 12.1 action semantics / env semantics는 큰 문제가 아님
+
+다음을 직접 확인했다.
+
+- dataset의 ground-truth `action`을 env에 그대로 넣으면
+  `qpos_after`가 dataset의 다음 `state`와 수치적으로 거의 완전히 일치한다
+- 즉 현재 ALOHA eval 경로에서:
+  - action ordering
+  - absolute vs delta semantics
+  - gripper channel semantics
+  는 큰 틀에서 맞는 것으로 봐도 된다
+
+따라서 현재 실패를 `env.step(action)` 해석 오류로 돌리기는 어렵다.
+
+### 12.2 `horizon=5`가 원흉은 아니었다
+
+비교 대상:
+
+- `octo_aloha_h1_test/499`
+- `octo_aloha_h5_test/499`
+
+offline sanity에서:
+
+- `h5` step0 `|pred-demo| mean = 0.0972`
+- `h1` step0 `|pred-demo| mean = 0.0395`
+
+rollout에서도:
+
+- 둘 다 `success=False`
+- `h5`는 초반 qpos oscillation이 더 큼
+- 따라서 `h5`를 채택할 근거는 없었음
+
+즉 `horizon=5`가 특별히 좋아 보이지 않았고, 오히려 `h1`이 더 유망했다.
+
+### 12.3 `action_horizon=1` 리셋도 돌파 실패
+
+학습 스크립트에 `--window_size` 플래그를 추가했고, Orbax의 `uid 4065` 오류를 피하도록
+`pwd/grp` safe patch를 넣었다.
+
+이후 아래 두 실험을 수행했다.
+
+#### ws1 + h1
+
+checkpoint:
+
+- `checkpoints/octo_aloha_ws1_h1_reset/499`
+
+결과:
+
+- `success_rate=0.000`
+- `mean_steps=20.0`
+- `mean_infer_ms=609.1`
+
+의미:
+
+- `multi-step horizon`만의 문제는 아니었다
+- `single-frame + 1-step BC`로 줄여도 online closed-loop는 실패했다
+
+#### ws2 + h1
+
+checkpoint:
+
+- `checkpoints/octo_aloha_ws2_h1_reset/499`
+
+학습은 `batch_size=32`에서 정상 완료되었다.
+
+결과:
+
+- `success_rate=0.000`
+- `mean_steps=20.0`
+- `mean_infer_ms=766.6`
+
+의미:
+
+- `window_size=2`로 늘려도 rollout 성공으로 이어지지 않았다
+- history를 약간 더 준다고 바로 해결되는 문제는 아니었다
+
+### 12.4 reset mismatch도 주원인은 아닌 것으로 보임
+
+dataset step0 이미지와 가장 비슷한 초기 화면 seed를 찾은 뒤
+그 seed에서 다시 rollout을 돌려봤지만 여전히 실패했다.
+
+즉:
+
+- 랜덤 초기화 / 첫 시야 mismatch가 일부 영향은 줄 수 있어도
+- 현재 0% success의 주원인으로 보기는 어렵다
+
+### 12.5 현재 판단
+
+이번 세션 기준 결론은 아래다.
+
+- `GVLA`가 문제인 단계가 아니다
+- `horizon=5`를 `1`로 줄여도 해결되지 않았다
+- `window_size=1`을 `2`로 늘려도 해결되지 않았다
+- action/env semantics mismatch도 주원인으로 보이지 않는다
+
+따라서 이 라인은 잠시 보류하는 것이 맞다.
+
+현 시점에서 ALOHA-Octo 경로는:
+
+- 디버깅 가능한 상태이고
+- finetune/eval도 끝까지 돌아가지만
+- baseline policy 자체가 online rollout 성공을 만들지 못한다
+
+즉 이 경로는 당장 논문 메인 결과를 위한 비교 라인으로 쓰기 어렵고,
+필요하다면 나중에 별도 reproduction/debug task로 다시 파는 편이 맞다.

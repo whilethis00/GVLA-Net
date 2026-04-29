@@ -447,6 +447,54 @@ def quantize_action(action: np.ndarray, n_bins: int) -> np.ndarray:
     return q
 
 
+def quantize_action_ar_tokens(action: np.ndarray, n_bins: int) -> np.ndarray:
+    """
+    RT-2-style per-dimension tokenization surrogate.
+
+    Each action dimension is discretized independently to n_bins bins. Unlike
+    the GVLA surrogate above, this keeps all 7 dimensions on the same tokenized
+    grid to mimic token-per-dimension decoding.
+    """
+    motion = np.clip(action, -1.0, 1.0)
+    if n_bins <= 1:
+        return np.zeros_like(action, dtype=np.float32)
+    grid = np.linspace(-1.0, 1.0, n_bins, dtype=np.float32)
+    step = grid[1] - grid[0]
+    idx = np.rint((motion - grid[0]) / step).astype(np.int32)
+    idx = np.clip(idx, 0, n_bins - 1)
+    return grid[idx].astype(np.float32)
+
+
+def maybe_inject_token_errors(action: np.ndarray, n_bins: int,
+                              token_error_prob: float, rng: np.random.RandomState) -> np.ndarray:
+    """Randomly perturb tokenized dimensions by one adjacent bin."""
+    if token_error_prob <= 0 or n_bins <= 1:
+        return action
+    out = action.copy()
+    step = 2.0 / (n_bins - 1)
+    for i in range(len(out)):
+        if rng.rand() < token_error_prob:
+            direction = -1.0 if rng.rand() < 0.5 else 1.0
+            out[i] = np.clip(out[i] + direction * step, -1.0, 1.0)
+    return out.astype(np.float32)
+
+
+def decode_action(action: np.ndarray, n_bins,
+                  decode_mode: str,
+                  ar_token_bins: int,
+                  token_error_prob: float,
+                  rng: np.random.RandomState) -> np.ndarray:
+    if n_bins is None:
+        return action
+    if decode_mode == "gvla":
+        return quantize_action(action, n_bins)
+    if decode_mode == "ar_tokens":
+        bins = ar_token_bins if ar_token_bins is not None else n_bins
+        decoded = quantize_action_ar_tokens(action, bins)
+        return maybe_inject_token_errors(decoded, bins, token_error_prob, rng)
+    raise ValueError(f"Unsupported decode mode: {decode_mode}")
+
+
 # =========================================================
 # Rollout & Success Rate
 # =========================================================
@@ -462,22 +510,38 @@ def make_policy(task: str):
 
 
 def run_one_rollout(env, policy,
-                    n_bins, max_steps: int, seed: int) -> bool:
+                    n_bins, max_steps: int, seed: int,
+                    decode_mode: str = "gvla",
+                    ar_token_bins: int = 256,
+                    token_latency_ms: float = 0.0,
+                    token_error_prob: float = 0.0) -> bool:
     """
     Run one episode.  n_bins=None → continuous (no quantisation).
     Returns True if cube lifted (reward > 0).
     """
     np.random.seed(seed)
+    rng = np.random.RandomState(seed)
     policy.reset()
     obs = env.reset()
     reward_accum = 0.0
+    prev_action = np.zeros(7, dtype=np.float32)
+    control_period_ms = 1000.0 / getattr(env, "control_freq", 20)
+    total_decode_ms = token_latency_ms * 7 if decode_mode == "ar_tokens" else 0.0
+    stale_steps = int(np.floor(total_decode_ms / control_period_ms))
 
     for _ in range(max_steps):
         action = policy.act(obs, env)
-        if n_bins is not None:
-            action = quantize_action(action, n_bins)
+        action = decode_action(action, n_bins, decode_mode, ar_token_bins, token_error_prob, rng)
+
+        for _ in range(stale_steps):
+            obs, reward, done, _ = env.step(prev_action)
+            reward_accum += reward
+            if done or reward_accum > 0:
+                return True
+
         obs, reward, done, _ = env.step(action)
         reward_accum += reward
+        prev_action = action
         if done or reward_accum > 0:
             return True
 
@@ -497,12 +561,22 @@ def run_one_rollout(env, policy,
 
 
 def measure_success_rate(env, task: str, n_bins, n_rollouts: int,
-                         max_steps: int) -> float:
+                         max_steps: int,
+                         decode_mode: str = "gvla",
+                         ar_token_bins: int = 256,
+                         token_latency_ms: float = 0.0,
+                         token_error_prob: float = 0.0) -> float:
     """Success rate over n_rollouts seeds."""
     successes = 0
     for seed in range(n_rollouts):
         policy = make_policy(task)
-        if run_one_rollout(env, policy, n_bins, max_steps, seed):
+        if run_one_rollout(
+            env, policy, n_bins, max_steps, seed,
+            decode_mode=decode_mode,
+            ar_token_bins=ar_token_bins,
+            token_latency_ms=token_latency_ms,
+            token_error_prob=token_error_prob,
+        ):
             successes += 1
     return successes / n_rollouts
 
@@ -686,6 +760,15 @@ def main():
     parser.add_argument("--task", type=str, default="lift",
                         choices=["lift", "nut_assembly_square", "pick_place_can"],
                         help="Robosuite task to evaluate")
+    parser.add_argument("--decode_mode", type=str, default="gvla",
+                        choices=["gvla", "ar_tokens"],
+                        help="Decode mechanism surrogate to evaluate")
+    parser.add_argument("--ar_token_bins", type=int, default=256,
+                        help="Bins per dimension for autoregressive token decode surrogate")
+    parser.add_argument("--token_latency_ms", type=float, default=0.0,
+                        help="Per-token decode latency for autoregressive token decode surrogate")
+    parser.add_argument("--token_error_prob", type=float, default=0.0,
+                        help="Probability of per-token adjacent-bin decode error")
     parser.add_argument("--n_rollouts",  type=int, default=30,
                         help="Rollouts per quantisation level")
     parser.add_argument("--max_steps",   type=int, default=400,
@@ -708,9 +791,12 @@ def main():
     device = args.device if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
     print(f"Task: {args.task}")
+    print(f"Decode mode: {args.decode_mode}")
 
     # ---- Bins to sweep ----
-    if args.task == "pick_place_can":
+    if args.decode_mode == "ar_tokens":
+        M_bins_sweep = [args.ar_token_bins]
+    elif args.task == "pick_place_can":
         M_bins_sweep = [32, 48, 64, 96, 128]
     else:
         M_bins_sweep = [4, 8, 16, 32, 64, 128, 256, 512, 1024]
@@ -755,7 +841,13 @@ def main():
 
         # Continuous baseline
         print(f"\n[Continuous — no quantisation]  ({args.n_rollouts} rollouts)")
-        sr = measure_success_rate(env, args.task, None, args.n_rollouts, args.max_steps)
+        sr = measure_success_rate(
+            env, args.task, None, args.n_rollouts, args.max_steps,
+            decode_mode=args.decode_mode,
+            ar_token_bins=args.ar_token_bins,
+            token_latency_ms=args.token_latency_ms,
+            token_error_prob=args.token_error_prob,
+        )
         success_results["inf"] = sr
         print(f"  → Success rate: {sr * 100:.1f}%")
 
@@ -764,7 +856,13 @@ def main():
             N_total = M ** action_dim
             print(f"\n[M={M} bins/dim  |  N_total={N_total:,.0f}]"
                   f"  ({args.n_rollouts} rollouts)")
-            sr = measure_success_rate(env, args.task, M, args.n_rollouts, args.max_steps)
+            sr = measure_success_rate(
+                env, args.task, M, args.n_rollouts, args.max_steps,
+                decode_mode=args.decode_mode,
+                ar_token_bins=args.ar_token_bins,
+                token_latency_ms=args.token_latency_ms,
+                token_error_prob=args.token_error_prob,
+            )
             success_results[M] = sr
             print(f"  → Success rate: {sr * 100:.1f}%")
 
