@@ -416,6 +416,35 @@ class ScriptedPickPlaceCanPolicy:
         return action
 
 
+class ScriptedPickPlaceCanPrecisionPolicy(ScriptedPickPlaceCanPolicy):
+    """
+    A stricter PickPlace controller that aims for a much tighter final placement.
+
+    The main differences from the default can policy are:
+      - smaller XY tolerances during transport / placement
+      - lower final placement height to force finer corrections near the bin
+      - gentler final controller gain to avoid overshooting the target area
+    """
+
+    def __init__(self,
+                 transport_xy_thresh: float = 0.012,
+                 place_height: float = 0.07,
+                 kp_place: float = 6.0):
+        super().__init__(
+            hover_height=0.14,
+            bin_hover_height=0.20,
+            place_height=place_height,
+            grasp_xy_thresh=0.018,
+            grasp_z_thresh=0.012,
+            place_xy_thresh=transport_xy_thresh,
+            lift_delta=0.16,
+            grasp_steps=12,
+            release_steps=10,
+            kp_move=10.0,
+            kp_place=kp_place,
+        )
+
+
 # =========================================================
 # Quantisation Utilities
 # =========================================================
@@ -499,22 +528,57 @@ def decode_action(action: np.ndarray, n_bins,
 # Rollout & Success Rate
 # =========================================================
 
-def make_policy(task: str):
+def make_policy(task: str,
+                precision_transport_xy_thresh: float = 0.012,
+                precision_place_height: float = 0.07,
+                precision_kp_place: float = 6.0):
     if task == "lift":
         return ScriptedLiftPolicy()
     if task == "nut_assembly_square":
         return ScriptedNutAssemblySquarePolicy()
     if task == "pick_place_can":
         return ScriptedPickPlaceCanPolicy()
+    if task == "pick_place_can_precision":
+        return ScriptedPickPlaceCanPrecisionPolicy(
+            transport_xy_thresh=precision_transport_xy_thresh,
+            place_height=precision_place_height,
+            kp_place=precision_kp_place,
+        )
     raise ValueError(f"Unsupported task: {task}")
 
 
+def is_success(env, obs: dict, reward_accum: float, task: str, policy,
+               precision_xy_tol: float = 0.018,
+               precision_release_clearance: float = 0.07) -> bool:
+    if task != "pick_place_can_precision":
+        return reward_accum > 0
+
+    obj_pos = np.array(obs["Can_pos"])
+    target_bin = np.array(env.target_bin_placements[env.object_id])
+    eef_pos = np.array(obs["robot0_eef_pos"])
+
+    xy_err = np.linalg.norm(obj_pos[:2] - target_bin[:2])
+    eef_clear = eef_pos[2] - obj_pos[2]
+
+    # Precision success is stricter than the default task: the object must
+    # have been successfully placed in the bin and end up close to the bin
+    # center in XY after the gripper has retreated.
+    return (
+        reward_accum > 0
+        and xy_err < precision_xy_tol
+        and eef_clear > precision_release_clearance
+        and policy.phase in ("retreat", "done")
+    )
+
+
 def run_one_rollout(env, policy,
-                    n_bins, max_steps: int, seed: int,
+                    n_bins, max_steps: int, seed: int, task: str,
                     decode_mode: str = "gvla",
                     ar_token_bins: int = 256,
                     token_latency_ms: float = 0.0,
-                    token_error_prob: float = 0.0) -> bool:
+                    token_error_prob: float = 0.0,
+                    precision_xy_tol: float = 0.018,
+                    precision_release_clearance: float = 0.07) -> bool:
     """
     Run one episode.  n_bins=None → continuous (no quantisation).
     Returns True if cube lifted (reward > 0).
@@ -536,13 +600,21 @@ def run_one_rollout(env, policy,
         for _ in range(stale_steps):
             obs, reward, done, _ = env.step(prev_action)
             reward_accum += reward
-            if done or reward_accum > 0:
+            if done or is_success(
+                env, obs, reward_accum, task, policy,
+                precision_xy_tol=precision_xy_tol,
+                precision_release_clearance=precision_release_clearance,
+            ):
                 return True
 
         obs, reward, done, _ = env.step(action)
         reward_accum += reward
         prev_action = action
-        if done or reward_accum > 0:
+        if done or is_success(
+            env, obs, reward_accum, task, policy,
+            precision_xy_tol=precision_xy_tol,
+            precision_release_clearance=precision_release_clearance,
+        ):
             return True
 
     # A few extra "hold" steps in case cube is still rising
@@ -554,10 +626,18 @@ def run_one_rollout(env, policy,
             else:
                 hold_q = hold
             obs, reward, done, _ = env.step(hold_q)
-            if reward > 0:
+            if is_success(
+                env, obs, reward, task, policy,
+                precision_xy_tol=precision_xy_tol,
+                precision_release_clearance=precision_release_clearance,
+            ):
                 return True
 
-    return reward_accum > 0
+    return is_success(
+        env, obs, reward_accum, task, policy,
+        precision_xy_tol=precision_xy_tol,
+        precision_release_clearance=precision_release_clearance,
+    )
 
 
 def measure_success_rate(env, task: str, n_bins, n_rollouts: int,
@@ -565,17 +645,29 @@ def measure_success_rate(env, task: str, n_bins, n_rollouts: int,
                          decode_mode: str = "gvla",
                          ar_token_bins: int = 256,
                          token_latency_ms: float = 0.0,
-                         token_error_prob: float = 0.0) -> float:
+                         token_error_prob: float = 0.0,
+                         precision_xy_tol: float = 0.018,
+                         precision_release_clearance: float = 0.07,
+                         precision_transport_xy_thresh: float = 0.012,
+                         precision_place_height: float = 0.07,
+                         precision_kp_place: float = 6.0) -> float:
     """Success rate over n_rollouts seeds."""
     successes = 0
     for seed in range(n_rollouts):
-        policy = make_policy(task)
+        policy = make_policy(
+            task,
+            precision_transport_xy_thresh=precision_transport_xy_thresh,
+            precision_place_height=precision_place_height,
+            precision_kp_place=precision_kp_place,
+        )
         if run_one_rollout(
-            env, policy, n_bins, max_steps, seed,
+            env, policy, n_bins, max_steps, seed, task,
             decode_mode=decode_mode,
             ar_token_bins=ar_token_bins,
             token_latency_ms=token_latency_ms,
             token_error_prob=token_error_prob,
+            precision_xy_tol=precision_xy_tol,
+            precision_release_clearance=precision_release_clearance,
         ):
             successes += 1
     return successes / n_rollouts
@@ -758,7 +850,7 @@ def plot_results(success_results: dict, latency_results: dict,
 def main():
     parser = argparse.ArgumentParser(description="Robosuite Quantisation Study")
     parser.add_argument("--task", type=str, default="lift",
-                        choices=["lift", "nut_assembly_square", "pick_place_can"],
+                        choices=["lift", "nut_assembly_square", "pick_place_can", "pick_place_can_precision"],
                         help="Robosuite task to evaluate")
     parser.add_argument("--decode_mode", type=str, default="gvla",
                         choices=["gvla", "ar_tokens"],
@@ -784,6 +876,21 @@ def main():
                         help="Skip latency measurement (env-only run)")
     parser.add_argument("--skip_rollout", action="store_true",
                         help="Skip rollout measurement (latency-only run)")
+    parser.add_argument("--precision_level", type=str, default="easy",
+                        choices=["easy", "medium", "hard", "very_hard", "custom"],
+                        help="Preset difficulty for pick_place_can_precision")
+    parser.add_argument("--precision_xy_tol", type=float, default=None,
+                        help="Final XY tolerance for precision success; overrides preset when set")
+    parser.add_argument("--precision_release_clearance", type=float, default=None,
+                        help="Required gripper retreat clearance for precision success")
+    parser.add_argument("--precision_transport_xy_thresh", type=float, default=None,
+                        help="Intermediate transport / placement XY threshold for the precision policy")
+    parser.add_argument("--precision_place_height", type=float, default=None,
+                        help="Final placement height target for the precision policy")
+    parser.add_argument("--precision_kp_place", type=float, default=None,
+                        help="Final placement proportional gain for the precision policy")
+    parser.add_argument("--bins", type=str, nargs="+", default=None,
+                        help="Optional subset of bins to evaluate, e.g. inf 256 1024 2048")
     args = parser.parse_args()
 
     save_dir = Path(args.save_dir)
@@ -793,11 +900,42 @@ def main():
     print(f"Task: {args.task}")
     print(f"Decode mode: {args.decode_mode}")
 
+    precision_presets = {
+        "easy": dict(xy_tol=0.018, release_clearance=0.07, transport_xy_thresh=0.012, place_height=0.07, kp_place=6.0),
+        "medium": dict(xy_tol=0.014, release_clearance=0.075, transport_xy_thresh=0.010, place_height=0.068, kp_place=5.6),
+        "hard": dict(xy_tol=0.010, release_clearance=0.08, transport_xy_thresh=0.008, place_height=0.066, kp_place=5.0),
+        "very_hard": dict(xy_tol=0.006, release_clearance=0.085, transport_xy_thresh=0.006, place_height=0.064, kp_place=4.5),
+        "custom": dict(xy_tol=0.018, release_clearance=0.07, transport_xy_thresh=0.012, place_height=0.07, kp_place=6.0),
+    }
+    precision_cfg = dict(precision_presets[args.precision_level])
+    if args.precision_xy_tol is not None:
+        precision_cfg["xy_tol"] = args.precision_xy_tol
+    if args.precision_release_clearance is not None:
+        precision_cfg["release_clearance"] = args.precision_release_clearance
+    if args.precision_transport_xy_thresh is not None:
+        precision_cfg["transport_xy_thresh"] = args.precision_transport_xy_thresh
+    if args.precision_place_height is not None:
+        precision_cfg["place_height"] = args.precision_place_height
+    if args.precision_kp_place is not None:
+        precision_cfg["kp_place"] = args.precision_kp_place
+
     # ---- Bins to sweep ----
-    if args.decode_mode == "ar_tokens":
+    evaluate_continuous = True
+    if args.bins is not None:
+        requested_bins = []
+        evaluate_continuous = False
+        for token in args.bins:
+            if token.lower() in {"inf", "continuous"}:
+                evaluate_continuous = True
+            else:
+                requested_bins.append(int(token))
+        M_bins_sweep = requested_bins
+    elif args.decode_mode == "ar_tokens":
         M_bins_sweep = [args.ar_token_bins]
     elif args.task == "pick_place_can":
         M_bins_sweep = [32, 48, 64, 96, 128]
+    elif args.task == "pick_place_can_precision":
+        M_bins_sweep = [32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024]
     else:
         M_bins_sweep = [4, 8, 16, 32, 64, 128, 256, 512, 1024]
 
@@ -831,7 +969,7 @@ def main():
             env_name = "Lift"
         elif args.task == "nut_assembly_square":
             env_name = "NutAssemblySquare"
-        elif args.task == "pick_place_can":
+        elif args.task in ("pick_place_can", "pick_place_can_precision"):
             env_name = "PickPlace"
             env_kwargs.update(single_object_mode=2, object_type="can")
         else:
@@ -840,16 +978,22 @@ def main():
         env = suite.make(env_name, **env_kwargs)
 
         # Continuous baseline
-        print(f"\n[Continuous — no quantisation]  ({args.n_rollouts} rollouts)")
-        sr = measure_success_rate(
-            env, args.task, None, args.n_rollouts, args.max_steps,
-            decode_mode=args.decode_mode,
-            ar_token_bins=args.ar_token_bins,
-            token_latency_ms=args.token_latency_ms,
-            token_error_prob=args.token_error_prob,
-        )
-        success_results["inf"] = sr
-        print(f"  → Success rate: {sr * 100:.1f}%")
+        if evaluate_continuous:
+            print(f"\n[Continuous — no quantisation]  ({args.n_rollouts} rollouts)")
+            sr = measure_success_rate(
+                env, args.task, None, args.n_rollouts, args.max_steps,
+                decode_mode=args.decode_mode,
+                ar_token_bins=args.ar_token_bins,
+                token_latency_ms=args.token_latency_ms,
+                token_error_prob=args.token_error_prob,
+                precision_xy_tol=precision_cfg["xy_tol"],
+                precision_release_clearance=precision_cfg["release_clearance"],
+                precision_transport_xy_thresh=precision_cfg["transport_xy_thresh"],
+                precision_place_height=precision_cfg["place_height"],
+                precision_kp_place=precision_cfg["kp_place"],
+            )
+            success_results["inf"] = sr
+            print(f"  → Success rate: {sr * 100:.1f}%")
 
         # Quantised sweep
         for M in M_bins_sweep:
@@ -862,6 +1006,11 @@ def main():
                 ar_token_bins=args.ar_token_bins,
                 token_latency_ms=args.token_latency_ms,
                 token_error_prob=args.token_error_prob,
+                precision_xy_tol=precision_cfg["xy_tol"],
+                precision_release_clearance=precision_cfg["release_clearance"],
+                precision_transport_xy_thresh=precision_cfg["transport_xy_thresh"],
+                precision_place_height=precision_cfg["place_height"],
+                precision_kp_place=precision_cfg["kp_place"],
             )
             success_results[M] = sr
             print(f"  → Success rate: {sr * 100:.1f}%")

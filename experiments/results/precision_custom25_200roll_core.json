@@ -1,0 +1,47 @@
+{
+  "experiment": "precision_custom25_200roll_core",
+  "task": "pick_place_can_precision",
+  "n_rollouts": 200,
+  "max_steps": 400,
+  "config": {
+    "xy_tol": 0.015,
+    "release_clearance": 0.075,
+    "transport_xy_thresh": 0.01,
+    "place_height": 0.068,
+    "kp_place": 5.4
+  },
+  "results": [
+    {
+      "setting": "continuous",
+      "label": "continuous",
+      "successes": 107,
+      "success_rate": 0.535,
+      "ci95_low": 0.46586521028994954,
+      "ci95_high": 0.6028155692957681
+    },
+    {
+      "setting": "gvla_256",
+      "label": "256",
+      "successes": 24,
+      "success_rate": 0.12,
+      "ci95_low": 0.08197935023887545,
+      "ci95_high": 0.17234361425904846
+    },
+    {
+      "setting": "gvla_1024",
+      "label": "1024",
+      "successes": 86,
+      "success_rate": 0.43,
+      "ci95_low": 0.36334204488394795,
+      "ci95_high": 0.49929639594461706
+    },
+    {
+      "setting": "gvla_2048",
+      "label": "2048",
+      "successes": 94,
+      "success_rate": 0.47,
+      "ci95_low": 0.4020463337087108,
+      "ci95_high": 0.5390844266463886
+    }
+  ]
+}

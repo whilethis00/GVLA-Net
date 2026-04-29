@@ -33,5 +33,19 @@
     "successes": 8,
     "n_rollouts": 50,
     "best_loss": 1.6190632572831167
+  },
+  {
+    "lambda": 5.0,
+    "success_rate": 0.24,
+    "successes": 12,
+    "n_rollouts": 50,
+    "best_loss": 1.6175813084676747
+  },
+  {
+    "lambda": 10.0,
+    "success_rate": 0.1,
+    "successes": 5,
+    "n_rollouts": 50,
+    "best_loss": 1.612298135527562
   }
 ]
