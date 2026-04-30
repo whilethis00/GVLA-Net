@@ -37,35 +37,16 @@
 
 논문에서 이 표의 역할은 "무엇을 비교했고, 무엇을 공유했고, 무엇이 달랐는지"를 한 번에 고정하는 것이다.
 
-### Table 1a. BC head comparison setup
-
-| Item | Setup |
+| Category | Setup |
 |---|---|
-| Simulator | `robosuite` |
-| Robot | `Panda` |
-| Task | RoboMimic `Lift` |
-| Dataset | `data/robomimic/lift/ph/low_dim_v141.hdf5` |
-| Observation | 49-dim low-dimensional state |
-| Action | 7D continuous action, clipped to `[-1, 1]`, discretized into `M` bins per dim |
+| Simulator / Robot | `robosuite` / `Panda` |
+| Tasks | RoboMimic `Lift`, `custom2.5` precision placement |
+| Dataset | RoboMimic Lift PH low-dim |
+| Observation / Action | 49-dim state / 7D action |
 | Training | Behavior cloning |
-| Shared backbone | `49 -> 512 -> LN -> ReLU -> 512 -> LN -> ReLU -> 256 -> LN` |
-| Dense head | 7 independent `Linear(256, M)` heads |
-| GVLA head | 7 independent projection heads with `k = ceil(log2 M)` bit outputs |
-| Dense loss | cross-entropy over quantized bins |
-| GVLA loss | bit-wise BCE + orthogonality regularization |
-| Default epochs | 200 |
-| Default eval | 50 rollouts, max steps 500 |
-| Hardware for BC sweeps | CUDA (`A100`) |
-
-### Table 1b. Precision-regime validation setup
-
-| Item | Setup |
-|---|---|
-| Task | `pick_place_can_precision` (`custom2.5`) |
-| Rollout budget | 200 rollouts |
-| Max steps | 400 |
-| Compared settings | `continuous`, GVLA-256, GVLA-1024, GVLA-2048 |
-| Config | `xy_tol=0.015`, `release_clearance=0.075`, `transport_xy_thresh=0.01`, `place_height=0.068`, `kp_place=5.4` |
+| Shared backbone | MLP, `49 -> 512 -> 512 -> 256` |
+| Compared heads | Dense (`M`-way) vs GVLA (`log_2 M`-bit) |
+| Evaluation | rollout success, 95% CI, head-only latency |
 
 본문 문장:
 
@@ -100,17 +81,15 @@ Safe interpretation:
 
 **Table 3. Code geometry matters for binary action routing.**
 
-| `M` | Dense | GVLA natural | GVLA Gray | Eval |
-|---:|---:|---:|---:|---|
-| 128 | 10.0% | 2.0% | **16.0%** | matched, `n=50` |
-| 1024 | 4.0% | 2.0% | **18.0%** | matched, `n=50` |
-| 2048 | 16.0% | 4.0% | **24.0%** | matched, `n=50` |
-| 128 | — | — | **12.5%** | high-conf, `n=200` |
-| 1024 | — | — | **20.5%** | high-conf, `n=200` |
+| `M` | Dense | GVLA natural | GVLA Gray |
+|---:|---:|---:|---:|
+| 128 | 10.0% | 2.0% | **16.0%** |
+| 1024 | 4.0% | 2.0% | **18.0%** |
+| 2048 | 16.0% | 4.0% | **24.0%** |
 
 Caption draft:
 
-> Natural-binary GVLA underperforms across high-resolution settings, while Gray coding substantially improves success. The 200-rollout reruns confirm that the Gray-code gains are not a small-rollout artifact, although the exact absolute rates shift with reevaluation.
+> All rows are matched (`n=50`) evaluations. Natural-binary GVLA underperforms across high-resolution settings, while Gray coding substantially improves success.
 
 Safe interpretation:
 
@@ -118,11 +97,15 @@ Safe interpretation:
 - Gray code는 `128/1024/2048`에서 natural binary보다 모두 높다.
 - `M=1024`에서는 Gray가 Dense보다 뚜렷하게 높다 (`18%` vs `4%`).
 - `M=2048`에서도 같은 순서가 유지된다 (`24% > 16% > 4%`).
-- 다만 이 축의 matched comparison은 여전히 single seed + `n=50`이므로 trend 중심으로 써야 한다.
+- 다만 이 축은 single seed + `n=50` matched comparison이므로 trend 중심으로 써야 한다.
 
 본문 문장:
 
 > The matched sweep suggests that natural binary induces a code-geometry bottleneck, while Gray coding restores locality and substantially improves learnability in the high-resolution regime.
+
+High-confidence rerun note:
+
+> High-confidence reruns preserve the Gray-code signal, with `12.5%` at `M=128` and `20.5%` at `M=1024`.
 
 ## Table 4. Scaling Summary
 
@@ -140,7 +123,7 @@ Safe interpretation:
 
 Caption draft:
 
-> At batch `1`, GPU kernel-launch overhead dominates and Dense appears faster. As `B x M` grows, Dense exposes its linear output cost while GVLA remains approximately constant in `M`.
+> At batch `1`, GPU kernel-launch overhead dominates and Dense appears faster. As `B x M` grows, GVLA removes Dense's linear output-scaling bottleneck while remaining approximately constant in `M`.
 
 Safe interpretation:
 
@@ -259,6 +242,7 @@ L_GVLA
 | Rollouts | 50 for BC sweeps, 200 for high-confidence validation |
 | BC max steps | 500 |
 | Precision max steps | 400 |
+| Precision config | `xy_tol=0.015`, `release_clearance=0.075`, `transport_xy_thresh=0.01`, `place_height=0.068`, `kp_place=5.4` |
 | Dense loss | CE |
 | GVLA loss | BCE + `lambda L_ortho` |
 | Default `lambda` | 0.01 |
@@ -274,7 +258,7 @@ Main에는 넣지 않는 편이 안전하다.
 - head-replacement extrapolation 성격이 섞인다
 - reviewer가 메인 story보다 이쪽을 공격할 가능성이 높다
 
-넣더라도 appendix에서 아래 수준으로만 쓴다.
+넣더라도 appendix에서 아래 수준의 preliminary compatibility study로만 쓴다.
 
 > Preliminary head-replacement simulations suggest compatibility with multiple VLA backbones, but we do not claim end-to-end SOTA VLA performance.
 
