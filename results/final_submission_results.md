@@ -4,9 +4,9 @@
 
 논문의 방어 가능한 핵심 주장은 다음 세 가지다.
 
-1. high-resolution discretized control에서는 action resolution이 실제 성능에 중요하다.
-2. bitwise head의 학습 가능성은 code geometry에 크게 좌우된다.
-3. large-`M` regime에서는 dense head보다 bitwise head가 latency 측면에서 유리해질 수 있다.
+1. high-resolution discretized control에서는 action resolution과 code geometry가 실제 성능에 중요하다.
+2. Gray-coded bitwise head는 Natural binary bitwise head보다 일관되게 더 학습 가능하다.
+3. head-only scaling은 bitwise factorization의 효율 잠재력을 보여주지만, matched end-to-end latency에서는 현재 BC setup 기준 `M<=2048`에서 Dense가 더 빠르다.
 
 ## 1. Main Success Table
 
@@ -64,7 +64,27 @@ validation split:
 - 따라서 main claim은 `Gray improves bitwise learnability relative to Natural`로 잠그는 것이 맞다.
 - Dense는 offline imitation metric 자체는 더 좋으므로, `bitwise beats Dense on offline error` 같은 주장은 하지 않는다.
 
-## 3. Code Geometry Diagnostic
+## 3. Reviewer-Defense Additions At `M=1024`
+
+Source:
+
+- `experiments/results/bc_study/reviewer_defense_metrics/validation_metrics.md`
+
+| Run | Encoding | Action L1 | Action L2 | Bin Error | Hamming | Exact Bin Match |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| gvla_1024 | Natural | 0.0554 | 0.2582 | 28.2745 | 0.1938 | 0.2393 |
+| gvla_1024_seed2 | Natural | 0.0530 | 0.2488 | 27.0196 | 0.1890 | 0.2408 |
+| gvla_gray_1024 | Gray | 0.0304 | 0.1488 | 15.4692 | 0.1498 | 0.2946 |
+| gvla_gray_1024_noorth | Gray, no-orth | 0.0294 | 0.1429 | 14.9637 | 0.1497 | 0.2934 |
+| gvla_random_1024_seed7 | Random | 0.4020 | 1.3917 | 205.7474 | 0.2840 | 0.1819 |
+
+핵심 해석:
+
+- `Natural seed2`가 기존 Natural과 거의 같은 수치를 보여, Gray-vs-Natural 차이가 single-seed artifact일 가능성을 낮춘다.
+- `Gray no-orth`가 기존 Gray와 거의 같거나 약간 더 좋아, main effect가 orthogonality regularization이 아니라 code geometry라는 점을 지지한다.
+- `Random` code는 validation metric에서 크게 무너져, `Gray > Natural >> Random` 구조를 보여준다.
+
+## 4. Code Geometry Diagnostic
 
 Source:
 
@@ -84,18 +104,48 @@ Source:
 - Random code는 가장 거칠다.
 - 따라서 `code geometry matters`를 synthetic 예시만이 아니라 실제 trajectory 통계로도 뒷받침할 수 있다.
 
-## 4. End-to-End Latency
+## 5. Rollout Robustness
 
 Source:
 
-- `experiments/results/bc_study/end_to_end_latency/end_to_end_latency.md`
-- `experiments/results/bc_study/end_to_end_latency/end_to_end_latency.json`
+- `experiments/results/bc_study/rollout_robustness/rollout_robustness.md`
+
+`200-rollout` 결과:
+
+| Run | Successes | Success Rate | Wilson 95% CI |
+| --- | ---: | ---: | --- |
+| gvla_1024 | 7 | 3.5% | [0.017, 0.070] |
+| gvla_gray_1024 | 42 | 21.0% | [0.159, 0.272] |
+| dense_1024 | 27 | 13.5% | [0.094, 0.189] |
+| gvla_2048 | 4 | 2.0% | [0.008, 0.050] |
+| gvla_gray_2048 | 23 | 11.5% | [0.078, 0.167] |
+| dense_2048 | 18 | 9.0% | [0.058, 0.138] |
+
+Pairwise Fisher exact test:
+
+- `Natural vs Gray @ 1024`: `p = 6.55e-08`
+- `Natural vs Gray @ 2048`: `p = 1.95e-04`
+- `Dense vs Gray @ 1024`: `p = 0.063`
+- `Dense vs Gray @ 2048`: `p = 0.510`
+
+핵심 해석:
+
+- Gray는 `M=1024`와 `M=2048`에서 `200-rollout` 기준으로도 Natural보다 확실히 낫다.
+- Gray가 Dense보다 높아 보이는 구간이 있어도, 현재 evidence로는 `Gray > Dense`를 main claim으로 쓰지 않는다.
+- 따라서 main success claim은 `Gray beats Natural robustly in the high-resolution regime`로 제한한다.
+
+## 6. End-to-End Latency
+
+Source:
+
+- `experiments/results/bc_study/end_to_end_latency_gpu/end_to_end_latency.md`
+- `experiments/results/bc_study/end_to_end_latency_gpu/end_to_end_latency.json`
 
 protocol:
 
 - device: `cuda`
 - GPU: `NVIDIA A100-SXM4-80GB`
-- torch: `2.6.0+cu124`
+- torch: `2.1.1+cu118`
 - warmup: `100`
 - measure: `1000`
 - statistic: mean latency per forward pass
@@ -104,18 +154,18 @@ protocol:
 
 | Run | Batch | Latency (ms) |
 | --- | ---: | ---: |
-| dense_128 | 1 | 0.8464 |
-| gvla_128 | 1 | 2.4915 |
-| gvla_gray_128 | 1 | 5.0921 |
-| dense_1024 | 256 | 0.8597 |
-| gvla_1024 | 256 | 2.4994 |
-| gvla_gray_1024 | 256 | 5.8739 |
-| dense_2048 | 1 | 0.8396 |
-| gvla_2048 | 1 | 2.4855 |
-| gvla_gray_2048 | 1 | 6.4359 |
-| dense_2048 | 256 | 0.8551 |
-| gvla_2048 | 256 | 2.5011 |
-| gvla_gray_2048 | 256 | 6.1949 |
+| dense_128 | 1 | 0.7382 |
+| gvla_128 | 1 | 2.1944 |
+| gvla_gray_128 | 1 | 4.6284 |
+| dense_1024 | 256 | 0.7926 |
+| gvla_1024 | 256 | 2.2318 |
+| gvla_gray_1024 | 256 | 5.3953 |
+| dense_2048 | 1 | 0.7361 |
+| gvla_2048 | 1 | 2.2069 |
+| gvla_gray_2048 | 1 | 5.9004 |
+| dense_2048 | 256 | 0.7909 |
+| gvla_2048 | 256 | 2.2364 |
+| gvla_gray_2048 | 256 | 5.6997 |
 
 핵심 해석:
 
@@ -123,16 +173,21 @@ protocol:
 - 이번 matched BC artifact에서는 `M=128~2048` 전 구간에서 Dense가 end-to-end latency 기준으로 더 빠르다.
 - Dense와 Natural bitwise는 이 범위에서 `M`과 batch 변화에 거의 흔들리지 않는다.
 - Gray는 success/validation metric에서는 Natural보다 낫지만, latency는 bitwise family 내부에서 Natural보다 확실히 느리다.
+- 따라서 latency는 main selling point가 아니라, head-only scaling evidence를 보완하는 제한된 secondary analysis로만 사용한다.
 
 따라서 latency claim은 아래처럼 제한한다:
 
 > Bitwise heads do not automatically improve end-to-end latency in the current BC regime. Their latency advantage is supported by head-only scaling evidence, while the matched BCPolicy.predict artifact shows that Dense remains faster for `M<=2048` in this setup.
 
-## 5. Locked Paper Claim
+## 7. Locked Paper Claim
 
 이 결과 패키지로 방어 가능한 논문 주장은 아래다.
 
-> High-resolution discretized robot control can benefit from bitwise output factorization, but the learnability of bitwise heads depends critically on target-code geometry. Gray coding preserves locality and substantially improves bitwise action prediction relative to natural binary coding.
+> High-resolution discretized robot control can benefit from bitwise output factorization, but the learnability of bitwise heads depends critically on target-code geometry. Gray coding preserves locality and substantially improves bitwise action prediction relative to natural binary coding. We do not claim matched end-to-end latency gains over Dense in the current BC setup.
+
+Reviewer-defense addendum:
+
+> This effect is not explained by a single natural-binary seed, does not disappear when orthogonality regularization is removed, degrades sharply under random code assignments, and remains visible across 200 evaluation rollouts in the high-resolution regime.
 
 하지 말아야 할 주장:
 
@@ -142,10 +197,13 @@ protocol:
 - `Gray is the fastest bitwise variant`
 - `this is a VLA-scale result`
 
-## 6. Submission Checklist For Results
+## 8. Submission Checklist For Results
 
 - main table: locked
 - validation metrics: locked
+- reviewer-defense metrics: locked
+- code-geometry diagnostic: locked
+- 200-rollout robustness: locked
 - end-to-end latency: locked
 - claim boundary: locked
 - remaining work: paper writing and presentation only
