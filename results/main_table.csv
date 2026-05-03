@@ -1,0 +1,4 @@
+Head,Encoding,M=128,M=256,M=1024,M=2048,Notes
+Dense CE,N/A,"10.0% (5/50)","16.0% (8/50)","4.0% (2/50)","16.0% (8/50)","M=128/256/1024 from eval_results.json; M=2048 from eval_results_2048.json"
+Bitwise,Natural,"2.0% (1/50)","4.0% (2/50)","2.0% (1/50)","4.0% (2/50)","M=128/256/1024 from eval_results.json; M=2048 from eval_results_2048.json"
+Bitwise,Gray,"16.0% (8/50)","10.0% (5/50)","18.0% (9/50)","24.0% (12/50)","M=128/256/1024 from eval_results.json; M=2048 from eval_results_2048.json; EXPERIMENTS.md separately notes 15.5% (31/200) for M=128"
