@@ -345,7 +345,77 @@ batch=1 결과만 보고 "GVLA가 더 느리다"고 결론냈던 실험 2의 해
 
 ---
 
-## 남은 과제
+## 실험 4b — Offline Validation Metrics (완료)
+
+**목적:** rollout success만으로는 보이지 않는 code geometry 차이를 offline action-space metric으로 확인
+
+**설정:** saved checkpoint 재사용, `low_dim_v141.hdf5`에서 locked validation split(`val_size=967`), CUDA (A100)
+
+**산출물:**
+- `validation_metrics/validation_metrics.json`
+- `validation_metrics/predictions/*.csv`
+
+### 결과
+
+| M | Variant | Action L1 | Action L2 | Mean \|b_hat-b\| | Hamming | Adjacent-bin rate | Exact bin match |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 128 | Dense | **0.0216** | **0.1016** | **1.17** | 0.0986 | 0.0858 | **0.7347** |
+| 128 | GVLA natural | 0.0539 | 0.2486 | 3.30 | 0.1367 | 0.1603 | 0.4797 |
+| 128 | GVLA gray | 0.0292 | 0.1350 | 1.70 | **0.0891** | 0.1721 | 0.5936 |
+| 256 | Dense | **0.0201** | **0.0994** | **2.37** | 0.1207 | 0.0966 | **0.6679** |
+| 256 | GVLA natural | 0.0549 | 0.2573 | 6.90 | 0.1566 | 0.1358 | 0.3761 |
+| 256 | GVLA gray | 0.0290 | 0.1388 | 3.58 | **0.1114** | 0.1817 | 0.4766 |
+| 1024 | Dense | **0.0172** | **0.0921** | **8.63** | **0.1350** | 0.0526 | **0.6116** |
+| 1024 | GVLA natural | 0.0554 | 0.2582 | 28.27 | 0.1938 | 0.0623 | 0.2393 |
+| 1024 | GVLA gray | 0.0304 | 0.1488 | 15.47 | 0.1498 | 0.1259 | 0.2946 |
+| 2048 | Dense | **0.0126** | **0.0692** | **12.68** | **0.1187** | 0.0259 | **0.6564** |
+| 2048 | GVLA natural | 0.0551 | 0.2587 | 56.37 | 0.2030 | 0.0412 | 0.2105 |
+| 2048 | GVLA gray | 0.0311 | 0.1517 | 31.72 | 0.1649 | 0.0873 | 0.2426 |
+
+### 해석
+
+- Gray code는 모든 M에서 natural GVLA 대비 `Hamming`, `|b_hat-b|`, `action L1/L2`를 명확히 줄인다.
+- 즉 `Gray -> smoother code geometry -> lower bit/bin/action error` 연결은 offline metric으로 확인됐다.
+- 다만 이 locked validation split에서는 Dense가 여전히 가장 낮은 action error와 가장 높은 exact bin match를 보인다.
+- 따라서 이 실험으로 강하게 말할 수 있는 것은 "Gray가 natural GVLA를 고친다"이지, "Gray가 Dense를 이긴다"는 아니다.
+
+---
+
+## 실험 4c — Matched End-to-End Latency (완료)
+
+**목적:** 기존 head-only latency와 분리해서, 실제 `BCPolicy.predict()` 전체 latency를 동일 checkpoint 기준으로 측정
+
+**설정:** saved checkpoint 재사용, batch ∈ {1, 256}, M ∈ {128, 256, 1024, 2048}, CUDA (A100)
+
+**산출물:**
+- `end_to_end_latency/end_to_end_latency.json`
+- `end_to_end_latency/end_to_end_latency.csv`
+
+### 결과 (ms, end-to-end)
+
+| M | Variant | batch=1 | batch=256 |
+|---|---|---:|---:|
+| 128 | Dense | **0.8464** | **0.8533** |
+| 128 | GVLA natural | 2.4915 | 2.4939 |
+| 128 | GVLA gray | 5.0921 | 4.9197 |
+| 256 | Dense | **0.8429** | **0.8536** |
+| 256 | GVLA natural | 2.4829 | 2.4936 |
+| 256 | GVLA gray | 5.4002 | 5.2278 |
+| 1024 | Dense | **0.8411** | **0.8597** |
+| 1024 | GVLA natural | 2.4925 | 2.4994 |
+| 1024 | GVLA gray | 6.0503 | 5.8739 |
+| 2048 | Dense | **0.8396** | **0.8551** |
+| 2048 | GVLA natural | 2.4855 | 2.5011 |
+| 2048 | GVLA gray | 6.4359 | 6.1949 |
+
+### 해석
+
+- BC end-to-end 기준으로는 현재 `Dense < GVLA natural < GVLA gray` 순으로 빠르다.
+- Dense와 GVLA natural은 이 구간에서 M과 batch에 거의 무관하게 flat하다.
+- Gray-coded GVLA는 accuracy는 개선되지만 end-to-end latency cost가 꽤 크다.
+- 따라서 latency framing은 반드시 `head-only`와 `end-to-end`를 분리해서 제시해야 한다.
+
+---
 
 ## 실험 5 — λ Ablation (완료)
 
@@ -427,13 +497,16 @@ rollout에서는 엉터리 action을 출력한다.
 ### 우선순위 높음
 - [ ] M=128, 256, 512, 1024 구간을 **3 seed 이상, n_rollouts=200 이상**으로 재실험
   - 지금 single seed + n=50은 통계적으로 너무 약함
-- [ ] Bit accuracy, Mean Hamming error, Decoded action distance metric 추가
-  - "Gray code → Hamming error 감소 → action 오차 감소 → success 증가" 연결 필요
+- [x] Bit accuracy, Mean Hamming error, Decoded action distance metric 추가
+  - offline validation artifact에서 `mean_action_l1/l2`, `mean_bin_error`, `mean_hamming_error`, `adjacent_bin_error_rate` 확보
 - [ ] **Exp 2 vs Exp 3 seed 불일치 정리** — 최종 표에는 동일 실험 내 수치만 사용
+- [x] matched end-to-end latency 추가
+  - `BCPolicy.predict()` 기준 artifact 확보, head-only latency와 분리 가능
 
 ### 우선순위 중간
 - [ ] Random binary code baseline 추가 (Gray code의 우위가 "다른 encoding이라서"가 아님을 증명)
-- [ ] batch=1 vs batch=128 이상 latency 비교 — 실험 4 (bc_latency_batch.py)
+- [x] batch=1 vs batch=128 이상 latency 비교 — 실험 4 (bc_latency_batch.py)
+- [ ] 새 validation / E2E latency artifact를 최종 표/그림에 반영할지 서술 기준 확정
 
 ---
 
@@ -443,14 +516,20 @@ rollout에서는 엉터리 action을 출력한다.
 experiments/results/bc_study/
 ├── EXPERIMENTS.md                    ← 이 파일
 ├── eval_results.json                 ← 실험 3 수치 결과 (dense + gvla + gvla_gray)
-├── latency_batch.json                ← 실험 4 결과 (예정)
+├── latency_batch.json                ← 실험 4 결과 (head-only, batch × M)
+├── validation_metrics/
+│   ├── validation_metrics.json       ← 실험 4b 결과 (offline action-space metrics)
+│   └── predictions/*.csv             ← per-sample prediction export
+├── end_to_end_latency/
+│   ├── end_to_end_latency.json       ← 실험 4c 결과 (matched BCPolicy.predict latency)
+│   └── end_to_end_latency.csv
 ├── checkpoints/
-│   ├── dense_8/ ~ dense_1024/            실험 3, Dense
-│   ├── gvla_8/ ~ gvla_1024/              실험 3, GVLA (natural binary)
-│   └── gvla_gray_8/ ~ gvla_gray_1024/   실험 3, GVLA (gray code)
+│   ├── dense_8/ ~ dense_2048/            실험 3, Dense
+│   ├── gvla_8/ ~ gvla_2048/              실험 3, GVLA (natural binary)
+│   └── gvla_gray_8/ ~ gvla_gray_2048/   실험 3, GVLA (gray code)
 └── figures/
     ├── bc_success_rate.png
     ├── bc_latency.png
     ├── bc_combined.png
-    └── latency_batch_sweep.png           실험 4 완료 후 생성
+    └── latency_batch_sweep.png           실험 4 결과 그림
 ```
