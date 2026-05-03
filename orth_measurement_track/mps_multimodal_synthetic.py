@@ -8,8 +8,8 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
-from torch import nn
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -50,6 +50,27 @@ def make_dataset(num_samples: int, input_dim: int, device: torch.device) -> tupl
     return latent, bits
 
 
+def entropy_from_probs(probs: torch.Tensor, eps: float = 1e-9) -> torch.Tensor:
+    safe = probs.clamp_min(eps)
+    return -(safe * safe.log2()).sum(dim=-1)
+
+
+def conditional_entropy_curve(
+    probs: torch.Tensor,
+    true_bits: torch.Tensor,
+    code_ids: torch.Tensor,
+    num_bits: int,
+) -> list[float]:
+    code_bits = code_bits_from_indices(code_ids, num_bits).to(probs.device)
+    values = []
+    for prefix_len in range(1, num_bits + 1):
+        mask = (code_bits.unsqueeze(0)[:, :, :prefix_len] == true_bits.unsqueeze(1)[:, :, :prefix_len]).all(dim=-1)
+        masked = probs * mask.to(probs.dtype)
+        normalized = masked / masked.sum(dim=-1, keepdim=True).clamp_min(1e-9)
+        values.append(float(entropy_from_probs(normalized).mean().item()))
+    return values
+
+
 def train_product(model: ProductQGVLAHead, train_x: torch.Tensor, train_bits: torch.Tensor, args: argparse.Namespace) -> None:
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     for _ in range(args.steps):
@@ -74,23 +95,36 @@ def train_mps(model: MPSQGVLAHead, train_x: torch.Tensor, train_bits: torch.Tens
         optimizer.step()
 
 
-def evaluate_product(model: ProductQGVLAHead, val_x: torch.Tensor, target_bits: torch.Tensor) -> dict[str, float]:
+def evaluate_product(
+    model: ProductQGVLAHead,
+    val_x: torch.Tensor,
+    target_bits: torch.Tensor,
+) -> tuple[dict[str, float], torch.Tensor, list[float]]:
     with torch.no_grad():
-        codes = target_bits.unsqueeze(1)
-        probs = model.code_probability(val_x, codes).squeeze(1)
-        target_prob = float(probs.mean().item())
+        code_ids, all_probs = model.enumerate_code_probabilities(val_x)
+        low_id = 0
+        high_id = (1 << model.num_bits) - 1
+        target_prob = float((all_probs[:, low_id] + all_probs[:, high_id]).mean().item())
         logits = model.forward(val_x).logits.squeeze(1)
         pred_bits = (logits >= 0).to(torch.float32)
         bit_acc = float((pred_bits == target_bits).to(torch.float32).mean().item())
         all_half = float(((torch.sigmoid(logits) - 0.5).abs() < 0.05).to(torch.float32).mean().item())
+        pred_id = all_probs.argmax(dim=1)
+        top_mode_valid_rate = float(((pred_id == low_id) | (pred_id == high_id)).to(torch.float32).mean().item())
+        entropy_curve = conditional_entropy_curve(all_probs, target_bits, code_ids, model.num_bits)
     return {
         "target_mode_prob": target_prob,
         "bit_accuracy": bit_acc,
         "near_half_rate": all_half,
-    }
+        "top_mode_valid_rate": top_mode_valid_rate,
+    }, all_probs.mean(dim=0).cpu(), entropy_curve
 
 
-def evaluate_mps(model: MPSQGVLAHead, val_x: torch.Tensor, target_bits: torch.Tensor) -> tuple[dict[str, float], torch.Tensor]:
+def evaluate_mps(
+    model: MPSQGVLAHead,
+    val_x: torch.Tensor,
+    target_bits: torch.Tensor,
+) -> tuple[dict[str, float], torch.Tensor, list[float]]:
     with torch.no_grad():
         code_ids, probs = model.enumerate_code_probabilities(val_x)
         low_id = 0
@@ -98,10 +132,11 @@ def evaluate_mps(model: MPSQGVLAHead, val_x: torch.Tensor, target_bits: torch.Te
         target_prob = float((probs[:, low_id] + probs[:, high_id]).mean().item())
         pred_id = probs.argmax(dim=1)
         low_or_high = ((pred_id == low_id) | (pred_id == high_id)).to(torch.float32).mean().item()
+        entropy_curve = conditional_entropy_curve(probs, target_bits, code_ids, model.num_bits)
     return {
         "target_mode_prob": target_prob,
         "top_mode_valid_rate": float(low_or_high),
-    }, probs.mean(dim=0).cpu()
+    }, probs.mean(dim=0).cpu(), entropy_curve
 
 
 def plot_average_distribution(code_probs: torch.Tensor, output_path: Path, title: str) -> None:
@@ -109,6 +144,19 @@ def plot_average_distribution(code_probs: torch.Tensor, output_path: Path, title
     ax.plot(code_probs.numpy(), lw=1.5)
     ax.set_xlabel("Code index")
     ax.set_ylabel("Average probability")
+    ax.set_title(title)
+    ax.grid(True, alpha=0.25)
+    fig.tight_layout()
+    save_figure(fig, output_path, dpi=220)
+    plt.close(fig)
+
+
+def plot_entropy_curve(values: list[float], output_path: Path, title: str) -> None:
+    fig, ax = plt.subplots(figsize=(5.0, 3.5))
+    x = np.arange(1, len(values) + 1)
+    ax.plot(x, values, marker="o", lw=2.0)
+    ax.set_xlabel("Observed bit prefix length")
+    ax.set_ylabel("Conditional entropy")
     ax.set_title(title)
     ax.grid(True, alpha=0.25)
     fig.tight_layout()
@@ -130,18 +178,33 @@ def main() -> None:
 
     product = ProductQGVLAHead(args.input_dim, num_bins, action_dim=1).to(device)
     train_product(product, train_x, train_bits, args)
-    product_metrics = evaluate_product(product, val_x, val_bits)
+    product_metrics, product_avg_probs, product_entropy_curve = evaluate_product(product, val_x, val_bits)
     rows.append({"model": "product", "bond_dim": 1, **product_metrics})
+    plot_average_distribution(
+        product_avg_probs,
+        args.output_dir / "avg_distribution_product.png",
+        "Product-QGVLA average code distribution",
+    )
+    plot_entropy_curve(
+        product_entropy_curve,
+        args.output_dir / "entropy_curve_product.png",
+        "Product-QGVLA entropy decay",
+    )
 
     for bond_dim in args.bond_dims:
         model = MPSQGVLAHead(args.input_dim, num_bins, bond_dim=bond_dim).to(device)
         train_mps(model, train_x, train_bits, args)
-        metrics, avg_probs = evaluate_mps(model, val_x, val_bits)
+        metrics, avg_probs, entropy_curve = evaluate_mps(model, val_x, val_bits)
         rows.append({"model": "mps", "bond_dim": bond_dim, **metrics})
         plot_average_distribution(
             avg_probs,
             args.output_dir / f"avg_distribution_mps_r{bond_dim}.png",
             f"MPS-QGVLA average code distribution (r={bond_dim})",
+        )
+        plot_entropy_curve(
+            entropy_curve,
+            args.output_dir / f"entropy_curve_mps_r{bond_dim}.png",
+            f"MPS-QGVLA entropy decay (r={bond_dim})",
         )
 
     write_csv_rows(rows, args.output_dir / "summary.csv")

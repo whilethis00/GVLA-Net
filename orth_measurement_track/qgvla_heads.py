@@ -60,6 +60,20 @@ class ProductQGVLAHead(nn.Module):
             dim=-1,
         )
 
+    def enumerate_code_probabilities(self, latent: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.action_dim != 1:
+            raise ValueError("Enumeration helper currently expects action_dim=1.")
+        if self.num_bits > 16:
+            raise ValueError("Enumeration is only intended for small synthetic tasks.")
+        num_codes = 1 << self.num_bits
+        code_ids = torch.arange(num_codes, device=latent.device, dtype=torch.long)
+        codes = code_bits_from_indices(code_ids, self.num_bits).to(latent.device)
+        probs = self.code_probability(
+            latent,
+            codes.unsqueeze(0).expand(latent.size(0), -1, -1),
+        )
+        return code_ids, probs
+
 
 class MPSQGVLAHead(nn.Module):
     """Entangled Q-GVLA action head using a low-rank MPS amplitude model.
@@ -149,4 +163,3 @@ class MPSQGVLAHead(nn.Module):
         amplitude_tensor = torch.stack(amplitudes, dim=1)
         probabilities = amplitude_tensor.square() / normalization.unsqueeze(1)
         return code_ids, probabilities
-
