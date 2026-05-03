@@ -23,9 +23,15 @@ Sources:
 
 ## Caveats
 
-1. `M=2048` is not part of the saved matched latency evidence because that later run used `--skip_latency`.
+1. `M=2048` is now part of the saved matched end-to-end latency evidence in `experiments/results/bc_study/end_to_end_latency/`, but the success row still comes from the separate later rollout artifact `eval_results_2048.json`.
 2. The table is still mostly `single-seed`.
 3. For `Gray, M=128`, keep the strict saved main-table value `8/50 = 16.0%`.
+
+## Cross-Checks With New Artifacts
+
+- `experiments/results/bc_study/validation_metrics/validation_metrics.json` confirms that Gray improves bitwise action prediction relative to Natural at `M=128 / 256 / 1024 / 2048`.
+- `experiments/results/bc_study/end_to_end_latency/end_to_end_latency.json` confirms that the main success table should not be paired with an over-broad latency claim: in the matched BC artifact, Dense is still faster end-to-end up to `M=2048`.
+- Therefore the success table supports a learnability claim about code geometry, not a blanket claim that bitwise heads dominate Dense on every axis.
 
 ## Confidence Note
 

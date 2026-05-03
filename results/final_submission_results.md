@@ -49,14 +49,14 @@ validation split:
 
 ### Key Rows
 
-| Run | Action L1 | Action L2 | Bin Error | Hamming | Adjacent Bin Error | Exact Bin Match |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| gvla_128 | 0.0539 | 0.2486 | 3.3024 | 0.1367 | 0.1603 | 0.4797 |
-| gvla_gray_128 | 0.0292 | 0.1350 | 1.7016 | 0.0891 | 0.1721 | 0.5936 |
-| gvla_1024 | 0.0554 | 0.2582 | 28.2745 | 0.1938 | 0.0623 | 0.2393 |
-| gvla_gray_1024 | 0.0304 | 0.1488 | 15.4692 | 0.1498 | 0.1259 | 0.2946 |
-| gvla_2048 | 0.0551 | 0.2587 | 56.3696 | 0.2030 | 0.0412 | 0.2105 |
-| gvla_gray_2048 | 0.0311 | 0.1517 | 31.7193 | 0.1649 | 0.0873 | 0.2426 |
+| Run | Action L1 | Action L2 | Bin Error | Hamming | Exact Bin Match |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| gvla_128 | 0.0539 | 0.2486 | 3.3024 | 0.1367 | 0.4797 |
+| gvla_gray_128 | 0.0292 | 0.1350 | 1.7016 | 0.0891 | 0.5936 |
+| gvla_1024 | 0.0554 | 0.2582 | 28.2745 | 0.1938 | 0.2393 |
+| gvla_gray_1024 | 0.0304 | 0.1488 | 15.4692 | 0.1498 | 0.2946 |
+| gvla_2048 | 0.0551 | 0.2587 | 56.3696 | 0.2030 | 0.2105 |
+| gvla_gray_2048 | 0.0311 | 0.1517 | 31.7193 | 0.1649 | 0.2426 |
 
 핵심 해석:
 
@@ -64,7 +64,27 @@ validation split:
 - 따라서 main claim은 `Gray improves bitwise learnability relative to Natural`로 잠그는 것이 맞다.
 - Dense는 offline imitation metric 자체는 더 좋으므로, `bitwise beats Dense on offline error` 같은 주장은 하지 않는다.
 
-## 3. End-to-End Latency
+## 3. Code Geometry Diagnostic
+
+Source:
+
+- `experiments/results/bc_study/code_geometry_diagnostic/code_geometry_diagnostic.md`
+
+실제 demonstration trajectory에서 consecutive action target의 mean bit flips:
+
+| Encoding | All Steps | Small-Action Steps |
+| --- | ---: | ---: |
+| Natural | 2.7796 | 2.6630 |
+| Gray | 2.2483 | 2.1592 |
+| Random | 4.0069 | 3.9680 |
+
+핵심 해석:
+
+- 실제 데이터에서도 Gray는 Natural보다 target-bit transition이 더 smooth하다.
+- Random code는 가장 거칠다.
+- 따라서 `code geometry matters`를 synthetic 예시만이 아니라 실제 trajectory 통계로도 뒷받침할 수 있다.
+
+## 4. End-to-End Latency
 
 Source:
 
@@ -73,8 +93,9 @@ Source:
 
 protocol:
 
-- device: `cpu`
-- torch: `1.12.1`
+- device: `cuda`
+- GPU: `NVIDIA A100-SXM4-80GB`
+- torch: `2.6.0+cu124`
 - warmup: `100`
 - measure: `1000`
 - statistic: mean latency per forward pass
@@ -83,31 +104,31 @@ protocol:
 
 | Run | Batch | Latency (ms) |
 | --- | ---: | ---: |
-| dense_128 | 1 | 0.3649 |
-| gvla_128 | 1 | 0.8031 |
-| gvla_gray_128 | 1 | 1.1246 |
-| dense_1024 | 256 | 4.1445 |
-| gvla_1024 | 256 | 1.8773 |
-| gvla_gray_1024 | 256 | 2.7704 |
-| dense_2048 | 1 | 1.5967 |
-| gvla_2048 | 1 | 0.8061 |
-| gvla_gray_2048 | 1 | 1.2919 |
-| dense_2048 | 256 | 7.6192 |
-| gvla_2048 | 256 | 1.9229 |
-| gvla_gray_2048 | 256 | 2.8445 |
+| dense_128 | 1 | 0.8464 |
+| gvla_128 | 1 | 2.4915 |
+| gvla_gray_128 | 1 | 5.0921 |
+| dense_1024 | 256 | 0.8597 |
+| gvla_1024 | 256 | 2.4994 |
+| gvla_gray_1024 | 256 | 5.8739 |
+| dense_2048 | 1 | 0.8396 |
+| gvla_2048 | 1 | 2.4855 |
+| gvla_gray_2048 | 1 | 6.4359 |
+| dense_2048 | 256 | 0.8551 |
+| gvla_2048 | 256 | 2.5011 |
+| gvla_gray_2048 | 256 | 6.1949 |
 
 핵심 해석:
 
 - small `M`와 `batch=1`에서는 Dense가 더 빠를 수 있다.
-- `M=2048, batch=1`에서는 Natural bitwise가 Dense보다 빠르다.
-- `M=2048, batch=256`에서는 두 bitwise head 모두 Dense보다 크게 빠르다.
-- Gray는 success/validation metric에서는 Natural보다 낫지만, latency는 bitwise family 내부에서 Natural보다 다소 느리다.
+- 이번 matched BC artifact에서는 `M=128~2048` 전 구간에서 Dense가 end-to-end latency 기준으로 더 빠르다.
+- Dense와 Natural bitwise는 이 범위에서 `M`과 batch 변화에 거의 흔들리지 않는다.
+- Gray는 success/validation metric에서는 Natural보다 낫지만, latency는 bitwise family 내부에서 Natural보다 확실히 느리다.
 
 따라서 latency claim은 아래처럼 제한한다:
 
-> Bitwise heads do not always improve end-to-end latency, but they become favorable in high-resolution and batched regimes where dense heads scale poorly.
+> Bitwise heads do not automatically improve end-to-end latency in the current BC regime. Their latency advantage is supported by head-only scaling evidence, while the matched BCPolicy.predict artifact shows that Dense remains faster for `M<=2048` in this setup.
 
-## 4. Locked Paper Claim
+## 5. Locked Paper Claim
 
 이 결과 패키지로 방어 가능한 논문 주장은 아래다.
 
@@ -121,7 +142,7 @@ protocol:
 - `Gray is the fastest bitwise variant`
 - `this is a VLA-scale result`
 
-## 5. Submission Checklist For Results
+## 6. Submission Checklist For Results
 
 - main table: locked
 - validation metrics: locked

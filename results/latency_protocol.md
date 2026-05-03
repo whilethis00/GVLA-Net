@@ -31,7 +31,7 @@ What now exists:
 
 The paper should say:
 
-> Head-only latency does not always translate to end-to-end latency. At small `M` and batch size one, Dense remains competitive because backbone cost and fixed overhead dominate. As `M` grows, Dense end-to-end cost rises while bitwise heads remain flatter; by `M=2048`, bitwise natural is faster than Dense at both `batch=1` and `batch=256`.
+> Head-only latency does not always translate to end-to-end latency. In the saved BCPolicy.predict artifact on A100, Dense remains faster than both bitwise variants through `M=2048`, even though separate head-only scaling evidence still favors bitwise heads in larger-`M` / larger-batch regimes.
 
 The paper should not say:
 
@@ -63,21 +63,21 @@ Measured with `experiments/bc_end_to_end_latency.py`:
 
 Key measured regime:
 
-- `M=128, batch=1`: Dense `0.3649 ms`, Natural `0.8031 ms`, Gray `1.1246 ms`
-- `M=1024, batch=256`: Dense `4.1445 ms`, Natural `1.8773 ms`, Gray `2.7704 ms`
-- `M=2048, batch=1`: Dense `1.5967 ms`, Natural `0.8061 ms`, Gray `1.2919 ms`
-- `M=2048, batch=256`: Dense `7.6192 ms`, Natural `1.9229 ms`, Gray `2.8445 ms`
+- `M=128, batch=1`: Dense `0.8464 ms`, Natural `2.4915 ms`, Gray `5.0921 ms`
+- `M=1024, batch=256`: Dense `0.8597 ms`, Natural `2.4994 ms`, Gray `5.8739 ms`
+- `M=2048, batch=1`: Dense `0.8396 ms`, Natural `2.4855 ms`, Gray `6.4359 ms`
+- `M=2048, batch=256`: Dense `0.8551 ms`, Natural `2.5011 ms`, Gray `6.1949 ms`
 
 Interpretation to keep:
 
 - Dense is still faster at small `M` and `batch=1`.
-- Natural bitwise overtakes Dense by `M=2048` even at `batch=1`.
-- Both bitwise heads beat Dense clearly at larger batch in the high-resolution regime.
+- In this matched BC artifact, Dense stays faster than Natural and Gray through `M=2048` for both `batch=1` and `batch=256`.
+- Natural bitwise is the faster bitwise variant, but not faster than Dense in the measured BC regime.
 - Gray improves learning quality relative to natural binary, but is somewhat slower than natural within the bitwise family.
 
 ## Protocol Fields To Record
 
-- device / GPU model: `cpu` in the saved matched end-to-end artifact
+- device / GPU model
 - framework version
 - precision mode: default PyTorch eager inference
 - warm-up iterations
@@ -87,11 +87,12 @@ Interpretation to keep:
 
 Recorded for the saved artifact:
 
-- device: `cpu`
-- torch: `1.12.1`
+- device: `cuda`
+- GPU model: `NVIDIA A100-SXM4-80GB`
+- torch: `2.6.0+cu124`
 - warm-up iterations: `100`
 - timed iterations: `1000`
-- synchronization method: `none needed on cpu`
+- synchronization method: `torch.cuda.Event` timing + CUDA synchronize
 - statistic reported: arithmetic mean latency per forward pass
 
 ## Minimum Deliverables
@@ -110,4 +111,4 @@ python experiments/bc_end_to_end_latency.py
 
 - do not say `GVLA is always faster`
 - do not collapse Natural and Gray into one latency number
-- do say that high-resolution end-to-end latency now supports the claim that Dense becomes unfavorable as `M` grows
+- do say that head-only scaling and end-to-end BC latency answer different questions, and both should be reported separately
