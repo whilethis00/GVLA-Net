@@ -149,21 +149,25 @@ def make_figure1():
     ax.set_ylim(0, 1)
     ax.set_title("B. Natural vs Gray Code", loc="left", pad=10)
     ax.text(0.10, 0.82, "Natural binary", color=RED, fontsize=12, fontweight="bold")
-    add_round_box(ax, (0.08, 0.56), 0.22, 0.15, "3 = 011", "#FEF3F2", ec="#F97066", fontsize=12)
-    add_round_box(ax, (0.38, 0.56), 0.22, 0.15, "4 = 100", "#FEF3F2", ec="#F97066", fontsize=12)
-    add_arrow(ax, (0.30, 0.635), (0.38, 0.635), color=RED)
-    ax.text(0.10, 0.43, "Hamming distance = 3", color=RED, fontsize=11, fontweight="bold")
+    natural_rows = [("2", "010"), ("3", "011"), ("4", "100"), ("5", "101")]
+    y0 = 0.68
+    for idx, (idx_label, code) in enumerate(natural_rows):
+        y = y0 - idx * 0.13
+        ax.text(0.12, y + 0.005, idx_label, ha="right", va="center", fontsize=10, color=MUTED)
+        add_round_box(ax, (0.16, y - 0.05), 0.15, 0.10, code, "#FEF3F2", ec="#F97066", fontsize=11)
+        if idx < len(natural_rows) - 1:
+            add_arrow(ax, (0.235, y - 0.055), (0.235, y - 0.085), color=RED)
+    ax.text(0.04, 0.11, "carry boundaries trigger\nmulti-bit jumps", color=RED, fontsize=10, fontweight="bold", ha="left")
 
     ax.text(0.67, 0.82, "Gray code", color=GREEN, fontsize=12, fontweight="bold")
     rows = [("2", "011"), ("3", "010"), ("4", "110"), ("5", "111")]
-    y0 = 0.68
     for idx, (idx_label, code) in enumerate(rows):
         y = y0 - idx * 0.13
         ax.text(0.69, y + 0.005, idx_label, ha="right", va="center", fontsize=10, color=MUTED)
         add_round_box(ax, (0.73, y - 0.05), 0.15, 0.10, code, "#ECFDF3", ec="#84D5AE", fontsize=11)
         if idx < len(rows) - 1:
             add_arrow(ax, (0.805, y - 0.055), (0.805, y - 0.085), color=GREEN)
-    ax.text(0.58, 0.16, "neighboring bins differ by 1 bit", color=GREEN, fontsize=11, fontweight="bold")
+    ax.text(0.57, 0.11, "neighboring bins\ndiffer by 1 bit", color=GREEN, fontsize=10, fontweight="bold", ha="left")
 
     ax = fig.add_subplot(gs[0, 2])
     ax.set_facecolor(PANEL_BG)
@@ -171,21 +175,20 @@ def make_figure1():
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.set_title("C. Bit-wise BCE Sees Code Geometry", loc="left", pad=10)
-    add_round_box(ax, (0.18, 0.71), 0.62, 0.14, "small action change", "#F2F4F7", fontsize=12, weight="bold")
+    add_round_box(ax, (0.18, 0.71), 0.62, 0.14, "neighboring-bin transition", "#F2F4F7", fontsize=12, weight="bold")
     add_round_box(ax, (0.18, 0.43), 0.62, 0.14, "target code change", "#FEF3F2", ec="#F97066", fontsize=12, weight="bold")
     add_round_box(ax, (0.18, 0.15), 0.62, 0.14, "bit-wise BCE supervision", "#ECFDF3", ec="#84D5AE", fontsize=12, weight="bold")
     add_arrow(ax, (0.49, 0.71), (0.49, 0.57), color=INK, lw=1.8)
     add_arrow(ax, (0.49, 0.43), (0.49, 0.29), color=INK, lw=1.8)
     ax.text(0.18, 0.02, "The target code changes the local loss geometry.", fontsize=10, color=MUTED)
 
-    fig.suptitle("Figure 1. Bitwise factorization and code-induced supervision geometry", x=0.01, y=0.98, ha="left", fontsize=15, fontweight="bold")
-    fig.subplots_adjust(left=0.04, right=0.995, top=0.88, bottom=0.12, wspace=0.24)
+    fig.subplots_adjust(left=0.04, right=0.995, top=0.91, bottom=0.12, wspace=0.24)
     save_figure(fig, "figure1_concept_method")
 
 
 def make_figure2():
     fig = plt.figure(figsize=(16.2, 4.6), facecolor="white")
-    outer = fig.add_gridspec(1, 3, width_ratios=[1.0, 1.4, 1.0], wspace=0.28)
+    outer = fig.add_gridspec(1, 3, width_ratios=[1.15, 1.15, 1.05], wspace=0.28)
 
     m = 16
     k = int(math.ceil(math.log(m, 2)))
@@ -227,10 +230,9 @@ def make_figure2():
         ax.set_yticks([0, 5, 10, 15])
         for spine in ax.spines.values():
             spine.set_color(GRID)
-    cax = fig.add_axes([0.55, 0.16, 0.012, 0.68])
-    cb = fig.colorbar(im, cax=cax)
+    cb = fig.colorbar(im, ax=[fig.axes[1], fig.axes[2]], fraction=0.046, pad=0.04)
     cb.set_label("Hamming distance")
-    fig.text(0.33, 0.92, "B. Synthetic Hamming Distance Matrix", fontsize=13, ha="left", color=INK)
+    fig.text(0.36, 0.92, "B. Synthetic Hamming Distance Matrix", fontsize=13, ha="left", color=INK)
 
     ax = fig.add_subplot(outer[0, 2])
     ax.set_facecolor(PANEL_BG)
@@ -249,8 +251,7 @@ def make_figure2():
     ax.spines["right"].set_visible(False)
     ax.set_title("C. Demonstration Trajectories", loc="left", pad=10)
 
-    fig.suptitle("Figure 2. Code geometry diagnostics from synthetic codes and real trajectories", x=0.01, y=0.99, ha="left", fontsize=15, fontweight="bold")
-    fig.subplots_adjust(left=0.05, right=0.985, top=0.83, bottom=0.16)
+    fig.subplots_adjust(left=0.05, right=0.96, top=0.83, bottom=0.16)
     save_figure(fig, "figure2_code_geometry_diagnostic")
 
 
@@ -275,8 +276,7 @@ def make_figure3():
     ax.set_ylim(0, 70)
     ax.grid(True, axis="y", color=FOG, linewidth=0.8)
     ax.set_axisbelow(True)
-    ax.set_title("Figure 3. Resolution matters in a precision-sensitive variant", loc="left", pad=10, fontsize=14, fontweight="bold")
-    ax.text(0.02, 0.03, "Separate motivation study; not the main Dense-vs-bitwise comparison protocol.", transform=ax.transAxes, fontsize=9.5, color=MUTED)
+    ax.set_title("Resolution study", loc="left", pad=10, fontsize=14, fontweight="bold")
     fig.tight_layout()
     save_figure(fig, "figure3_resolution_matters")
 
@@ -317,7 +317,7 @@ def make_figure4():
     ax.grid(True, axis="y", color=FOG, linewidth=0.8)
     ax.set_axisbelow(True)
     ax.legend(frameon=False, loc="upper right")
-    ax.set_title("Figure 4. 200-rollout robustness at high resolution", loc="left", pad=10, fontsize=14, fontweight="bold")
+    ax.set_title("200-rollout robustness", loc="left", pad=10, fontsize=14, fontweight="bold")
     ax.text(x[0], 28.0, "Natural vs Gray:\np = 6.55e-08", ha="center", va="top", fontsize=9.5, color=INK)
     ax.text(x[1], 28.0, "Natural vs Gray:\np = 1.95e-04", ha="center", va="top", fontsize=9.5, color=INK)
     fig.tight_layout()
@@ -330,32 +330,34 @@ def make_figure5():
     natural = sorted([row for row in selected if row["encoding"] == "Natural"], key=lambda row: row["n_bins"])
     gray = sorted([row for row in selected if row["encoding"] == "Gray"], key=lambda row: row["n_bins"])
     ms = np.array([row["n_bins"] for row in natural], dtype=int)
+    xpos = np.arange(len(ms), dtype=float)
+    xlabels = [str(m) for m in ms]
 
     fig, axes = plt.subplots(1, 3, figsize=(13.8, 4.5), facecolor="white")
     for ax in axes:
         ax.set_facecolor(PANEL_BG)
         ax.grid(True, axis="y", color=FOG, linewidth=0.8)
         ax.set_axisbelow(True)
-        ax.set_xticks(ms)
+        ax.set_xticks(xpos)
+        ax.set_xticklabels(xlabels)
         ax.set_xlabel("Bins per dimension  $M$")
 
-    axes[0].plot(ms, [row["mean_action_l1"] for row in natural], color=RED, marker="o", lw=2.2, ms=6, label="Natural")
-    axes[0].plot(ms, [row["mean_action_l1"] for row in gray], color=GREEN, marker="s", lw=2.2, ms=5.5, label="Gray")
+    axes[0].plot(xpos, [row["mean_action_l1"] for row in natural], color=RED, marker="o", lw=2.2, ms=6, label="Natural")
+    axes[0].plot(xpos, [row["mean_action_l1"] for row in gray], color=GREEN, marker="s", lw=2.2, ms=5.5, label="Gray")
     axes[0].set_title("A. Action L1", loc="left")
     axes[0].set_ylabel("Mean action L1")
     axes[0].legend(frameon=False, loc="upper left")
 
-    axes[1].plot(ms, [row["mean_bin_error"] / float(row["n_bins"]) for row in natural], color=RED, marker="o", lw=2.2, ms=6)
-    axes[1].plot(ms, [row["mean_bin_error"] / float(row["n_bins"]) for row in gray], color=GREEN, marker="s", lw=2.2, ms=5.5)
+    axes[1].plot(xpos, [row["mean_bin_error"] / float(row["n_bins"]) for row in natural], color=RED, marker="o", lw=2.2, ms=6)
+    axes[1].plot(xpos, [row["mean_bin_error"] / float(row["n_bins"]) for row in gray], color=GREEN, marker="s", lw=2.2, ms=5.5)
     axes[1].set_title("B. Normalized Bin Error", loc="left")
     axes[1].set_ylabel("Bin error / $M$")
 
-    axes[2].plot(ms, [row["mean_hamming_error"] for row in natural], color=RED, marker="o", lw=2.2, ms=6)
-    axes[2].plot(ms, [row["mean_hamming_error"] for row in gray], color=GREEN, marker="s", lw=2.2, ms=5.5)
+    axes[2].plot(xpos, [row["mean_hamming_error"] for row in natural], color=RED, marker="o", lw=2.2, ms=6)
+    axes[2].plot(xpos, [row["mean_hamming_error"] for row in gray], color=GREEN, marker="s", lw=2.2, ms=5.5)
     axes[2].set_title("C. Hamming Error", loc="left")
     axes[2].set_ylabel("Mean Hamming error")
 
-    fig.suptitle("Figure 5. Validation metrics across action resolutions", x=0.01, y=1.02, ha="left", fontsize=15, fontweight="bold")
     fig.tight_layout()
     save_figure(fig, "figure5_validation_across_m")
 
@@ -385,7 +387,8 @@ def make_tables():
         [
             "| Item | Setting |",
             "| --- | --- |",
-            "| Environment | robosuite / RoboMimic low-dimensional manipulation |",
+            "| Environment | robosuite / RoboMimic Lift low-dimensional behavior cloning |",
+            "| Task | Lift / precision-sensitive manipulation variant |",
             "| Dataset | RoboMimic Lift PH low-dimensional demonstrations |",
             "| Validation split | 10%, seed 20260503 |",
             "| Action | 7D continuous action, discretized per dimension |",
@@ -412,7 +415,7 @@ def make_tables():
         [
             "| Head | Encoding | M=128 | M=256 | M=1024 | M=2048 |",
             "| --- | --- | ---: | ---: | ---: | ---: |",
-            "| Dense CE | N/A | 10.0% (5/50) | 16.0% (8/50) | 4.0% (2/50) | 16.0% (8/50) |",
+            "| Dense categorical | N/A | 10.0% (5/50) | 16.0% (8/50) | 4.0% (2/50) | 16.0% (8/50) |",
             "| Bitwise | Natural | 2.0% (1/50) | 4.0% (2/50) | 2.0% (1/50) | 4.0% (2/50) |",
             "| Bitwise | Gray | 16.0% (8/50) | 10.0% (5/50) | 18.0% (9/50) | 24.0% (12/50) |",
         ],
@@ -431,13 +434,13 @@ def make_tables():
             "experiments/results/bc_study/reviewer_defense_metrics/validation_metrics.json",
         ],
         [
-            "| Run | Encoding | L1 ↓ | Bin Err ↓ | Hamming ↓ | Exact ↑ |",
-            "| --- | --- | ---: | ---: | ---: | ---: |",
-            "| GVLA | Natural | 0.0554 | 28.2745 | 0.1938 | 0.2393 |",
-            "| GVLA seed2 | Natural | 0.0530 | 27.0196 | 0.1890 | 0.2408 |",
-            "| GVLA | Gray | 0.0304 | 15.4692 | 0.1498 | 0.2946 |",
-            "| GVLA no-orth | Gray | 0.0294 | 14.9637 | 0.1497 | 0.2934 |",
-            "| GVLA random | Random | 0.4020 | 205.7474 | 0.2840 | 0.1819 |",
+            "| Head / Code | L1 ↓ | Bin Err ↓ | Hamming ↓ | Exact Match ↑ |",
+            "| --- | ---: | ---: | ---: | ---: |",
+            "| Bitwise / Natural | 0.0554 | 28.2745 | 0.1938 | 0.2393 |",
+            "| Bitwise / Natural (seed2) | 0.0530 | 27.0196 | 0.1890 | 0.2408 |",
+            "| Bitwise / Gray | 0.0304 | 15.4692 | 0.1498 | 0.2946 |",
+            "| Bitwise / Gray (no-orth) | 0.0294 | 14.9637 | 0.1497 | 0.2934 |",
+            "| Bitwise / Random code | 0.4020 | 205.7474 | 0.2840 | 0.1819 |",
         ],
         notes=[
             "Natural seed2 stays close to Natural, reducing the single-seed artifact concern.",
@@ -455,12 +458,12 @@ def make_tables():
             "experiments/results/bc_study/end_to_end_latency_gpu/end_to_end_latency.md",
         ],
         [
-            "| Measurement | Dense | Natural bitwise | Gray bitwise | Main conclusion |",
-            "| --- | ---: | ---: | ---: | --- |",
-            "| Matched GPU latency, M=2048, batch 1 | 0.7361 ms | 2.2069 ms | 5.9004 ms | Dense remains faster in the current BC setup |",
-            "| Matched GPU latency, M=2048, batch 256 | 0.7909 ms | 2.2364 ms | 5.6997 ms | No universal speedup claim |",
-            "| Bitwise-family latency | — | faster | slower | Gray is for learnability, not speed |",
-            "| Head-only scaling | avoids linear M-way output growth | — | — | efficiency potential only |",
+            "| Analysis | Evidence | Conclusion |",
+            "| --- | --- | --- |",
+            "| Matched GPU latency, `M=2048`, batch 1 | Dense `0.7361 ms`, Natural `2.2069 ms`, Gray `5.9004 ms` | Dense remains faster in the current BC setup |",
+            "| Matched GPU latency, `M=2048`, batch 256 | Dense `0.7909 ms`, Natural `2.2364 ms`, Gray `5.6997 ms` | No universal speedup claim |",
+            "| Bitwise-family latency | Natural is faster than Gray | Gray is for learnability, not speed |",
+            "| Head-only scaling | Dense grows with output size; bitwise avoids linear `M` logits | Efficiency potential only |",
         ],
         notes=[
             "The main paper should describe latency as a qualified secondary analysis, not as primary evidence.",

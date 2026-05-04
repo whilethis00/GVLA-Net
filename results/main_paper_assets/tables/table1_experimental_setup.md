@@ -11,7 +11,8 @@ Main-paper setup summary for the controlled behavior-cloning comparison.
 
 | Item | Setting |
 | --- | --- |
-| Environment | robosuite / RoboMimic low-dimensional manipulation |
+| Environment | robosuite / RoboMimic Lift low-dimensional behavior cloning |
+| Task | Lift / precision-sensitive manipulation variant |
 | Dataset | RoboMimic Lift PH low-dimensional demonstrations |
 | Validation split | 10%, seed 20260503 |
 | Action | 7D continuous action, discretized per dimension |

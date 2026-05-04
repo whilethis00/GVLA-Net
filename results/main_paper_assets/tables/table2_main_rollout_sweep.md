@@ -12,7 +12,7 @@ All entries are 50-rollout success rates. The `M=2048` results come from a separ
 
 | Head | Encoding | M=128 | M=256 | M=1024 | M=2048 |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Dense CE | N/A | 10.0% (5/50) | 16.0% (8/50) | 4.0% (2/50) | 16.0% (8/50) |
+| Dense categorical | N/A | 10.0% (5/50) | 16.0% (8/50) | 4.0% (2/50) | 16.0% (8/50) |
 | Bitwise | Natural | 2.0% (1/50) | 4.0% (2/50) | 2.0% (1/50) | 4.0% (2/50) |
 | Bitwise | Gray | 16.0% (8/50) | 10.0% (5/50) | 18.0% (9/50) | 24.0% (12/50) |
 

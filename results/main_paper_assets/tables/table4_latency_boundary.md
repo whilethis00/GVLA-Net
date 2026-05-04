@@ -9,12 +9,12 @@ Small main-paper summary that shows the paper is not hiding unfavorable latency 
 
 ## Table
 
-| Measurement | Dense | Natural bitwise | Gray bitwise | Main conclusion |
-| --- | ---: | ---: | ---: | --- |
-| Matched GPU latency, M=2048, batch 1 | 0.7361 ms | 2.2069 ms | 5.9004 ms | Dense remains faster in the current BC setup |
-| Matched GPU latency, M=2048, batch 256 | 0.7909 ms | 2.2364 ms | 5.6997 ms | No universal speedup claim |
-| Bitwise-family latency | — | faster | slower | Gray is for learnability, not speed |
-| Head-only scaling | avoids linear M-way output growth | — | — | efficiency potential only |
+| Analysis | Evidence | Conclusion |
+| --- | --- | --- |
+| Matched GPU latency, `M=2048`, batch 1 | Dense `0.7361 ms`, Natural `2.2069 ms`, Gray `5.9004 ms` | Dense remains faster in the current BC setup |
+| Matched GPU latency, `M=2048`, batch 256 | Dense `0.7909 ms`, Natural `2.2364 ms`, Gray `5.6997 ms` | No universal speedup claim |
+| Bitwise-family latency | Natural is faster than Gray | Gray is for learnability, not speed |
+| Head-only scaling | Dense grows with output size; bitwise avoids linear `M` logits | Efficiency potential only |
 
 ## Notes
 

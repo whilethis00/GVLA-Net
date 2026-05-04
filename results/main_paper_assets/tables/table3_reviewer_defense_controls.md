@@ -9,13 +9,13 @@ Validation metrics used to answer the main reviewer attacks: single seed, orthog
 
 ## Table
 
-| Run | Encoding | L1 ↓ | Bin Err ↓ | Hamming ↓ | Exact ↑ |
-| --- | --- | ---: | ---: | ---: | ---: |
-| GVLA | Natural | 0.0554 | 28.2745 | 0.1938 | 0.2393 |
-| GVLA seed2 | Natural | 0.0530 | 27.0196 | 0.1890 | 0.2408 |
-| GVLA | Gray | 0.0304 | 15.4692 | 0.1498 | 0.2946 |
-| GVLA no-orth | Gray | 0.0294 | 14.9637 | 0.1497 | 0.2934 |
-| GVLA random | Random | 0.4020 | 205.7474 | 0.2840 | 0.1819 |
+| Head / Code | L1 ↓ | Bin Err ↓ | Hamming ↓ | Exact Match ↑ |
+| --- | ---: | ---: | ---: | ---: |
+| Bitwise / Natural | 0.0554 | 28.2745 | 0.1938 | 0.2393 |
+| Bitwise / Natural (seed2) | 0.0530 | 27.0196 | 0.1890 | 0.2408 |
+| Bitwise / Gray | 0.0304 | 15.4692 | 0.1498 | 0.2946 |
+| Bitwise / Gray (no-orth) | 0.0294 | 14.9637 | 0.1497 | 0.2934 |
+| Bitwise / Random code | 0.4020 | 205.7474 | 0.2840 | 0.1819 |
 
 ## Notes
 
