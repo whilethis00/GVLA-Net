@@ -1,242 +1,231 @@
-# Main vs Appendix Plan
+# Final Main vs Appendix Plan
 
-이 문서는 현재 잠긴 실험 결과를 기준으로, NeurIPS 제출본의 main paper와 appendix에 무엇을 넣을지 분리한 계획서다.
+This document fixes the final paper framing around a narrow, defensible claim. The paper should be submitted, but only if every section stays within the locked evidence and avoids the older overclaiming story.
 
-기준 원칙:
+## Final Title
 
-- main에는 `Gray > Natural` 핵심 claim을 직접 지지하는 결과만 넣는다.
-- appendix에는 robustness, protocol, 전체 표, 세부 수치를 넣는다.
-- latency는 main에서 과장하지 않는다.
+> Code Geometry Matters for Bitwise Action Prediction in High-Resolution Robot Control
 
-## Main Paper
+`GVLA` should remain a method name, not the title framing.
 
-### 1. Main Claim
-
-main text에서 유지할 핵심 주장:
+## One-Sentence Claim
 
 > High-resolution discretized robot control can benefit from bitwise output factorization, but the learnability of bitwise heads depends critically on target-code geometry. Gray coding preserves locality and substantially improves bitwise action prediction relative to natural binary coding.
 
-main text에서 하지 말아야 할 주장:
+This is the paper's boundary. Every abstract sentence, figure caption, README sentence, and limitation section should remain inside it.
+
+## Claims We Must Not Make
 
 - `GVLA solves large structured output spaces`
 - `GVLA is always faster than Dense`
-- `bitwise beats Dense on offline imitation error`
+- `Bitwise beats Dense on offline imitation error`
 - `Gray is the fastest bitwise variant`
-- `this is a VLA-scale result`
+- `This is a VLA-scale result`
 
-### 2. Main Figures / Tables
+Latency is not the main selling point. In the locked matched end-to-end BC setting, Dense remains faster up to `M=2048`, so latency is a qualified secondary analysis only.
 
-#### Figure 1: Code Geometry Motivation
+## Final Contributions
 
-넣을 것:
+### 1. Bitwise action head formulation
 
-- Natural binary counterexample: `3=011`, `4=100`
-- Gray code의 adjacent preservation
-- 실제 trajectory 기반 code geometry diagnostic 요약
+For `D` action dimensions and `M` bins per dimension:
 
-핵심 수치:
+- Dense predicts `D x M` logits.
+- Bitwise predicts `D x k` logits where `k = ceil(log2 M)`.
 
-- Natural bit flips: `2.7796`
-- Gray bit flips: `2.2483`
-- Random bit flips: `4.0069`
+Required sentence:
 
-메시지:
+> GVLA is not distributionally equivalent to a dense categorical head. It trades categorical expressivity for output efficiency by factorizing each action dimension through a binary code.
 
-- Gray는 실제 데이터에서도 Natural보다 smoother target transitions를 만든다.
+### 2. Code geometry as supervision geometry
 
-#### Table 1: Main Success Table
+Natural binary can map neighboring bins to distant codewords, for example `3 = 011` and `4 = 100`. Gray coding preserves local adjacency.
 
-Source:
+Required sentence:
 
-- `results/final_submission_results.md`
+> Under bit-wise BCE, the target code induces the supervision geometry.
 
-넣을 표:
+This is the main technical point. The paper is not about inventing binary codes; it is about showing that code geometry controls learnability in this control setting.
 
-| Head | Encoding | M=128 | M=256 | M=1024 | M=2048 |
-| --- | --- | ---: | ---: | ---: | ---: |
-| Dense CE | N/A | 10.0% (5/50) | 16.0% (8/50) | 4.0% (2/50) | 16.0% (8/50) |
-| Bitwise | Natural | 2.0% (1/50) | 4.0% (2/50) | 2.0% (1/50) | 4.0% (2/50) |
-| Bitwise | Gray | 16.0% (8/50) | 10.0% (5/50) | 18.0% (9/50) | 24.0% (12/50) |
+### 3. Controlled empirical evidence
 
-메시지:
+The strongest evidence bundle consists of four parts:
 
-- Gray는 high-resolution regime에서 Natural보다 consistently better하다.
-- Dense와의 비교는 mixed이므로 main claim은 `Gray > Natural`에 한정한다.
+1. Validation metrics
+   Natural at `M=1024`: `L1=0.0554`, `Bin Error=28.2745`, `Hamming=0.1938`
+   Gray at `M=1024`: `L1=0.0304`, `Bin Error=15.4692`, `Hamming=0.1498`
+2. Reviewer-defense controls
+   `Natural seed2` stays close to Natural.
+   `Gray no-orth` stays close to Gray.
+   `Random` collapses: `L1=0.4020`, `Bin Error=205.7474`.
+3. Code-geometry diagnostic
+   Mean target bit flips: Natural `2.7796`, Gray `2.2483`, Random `4.0069`
+4. 200-rollout robustness
+   `M=1024`: Natural `7/200 = 3.5%`, Gray `42/200 = 21.0%`, `p=6.55e-08`
+   `M=2048`: Natural `4/200 = 2.0%`, Gray `23/200 = 11.5%`, `p=1.95e-04`
 
-주의:
+These four pieces together support `Gray > Natural >> Random` and make `code geometry matters` the clean story.
 
-- `M=2048`는 separate later run이라는 provenance note를 표 주석이나 캡션에 넣는다.
+## Main Paper Structure
 
-#### Table 2 or Figure 2: Validation / Reviewer-Defense Summary
+### Page 1: Introduction
 
-넣을 것:
+Start with:
 
-- `Natural @ 1024`
-- `Natural seed2 @ 1024`
-- `Gray @ 1024`
-- `Gray no-orth @ 1024`
-- `Random @ 1024`
+> High-resolution discretized action prediction is attractive for precision-sensitive control, but dense per-dimension categorical heads scale linearly with the number of bins. Bitwise heads reduce the number of output logits, but they also change the learning problem. This paper studies how the target code geometry affects the learnability of bitwise action heads.
 
-핵심 수치:
+Do not mention:
 
-- Natural: `L1 0.0554`, `Bin Error 28.2745`, `Hamming 0.1938`
-- Natural seed2: `L1 0.0530`, `Bin Error 27.0196`, `Hamming 0.1890`
-- Gray: `L1 0.0304`, `Bin Error 15.4692`, `Hamming 0.1498`
-- Gray no-orth: `L1 0.0294`, `Bin Error 14.9637`, `Hamming 0.1497`
-- Random: `L1 0.4020`, `Bin Error 205.7474`, `Hamming 0.2840`
+- inference wall
+- large structured output space as the main claim
+- quantum measurement framing
+- VLA-scale deployment language
 
-메시지:
+### Page 2: Problem formulation
 
-- Gray-vs-Natural gap은 single seed artifact가 아니다.
-- main effect는 orthogonality보다 code geometry다.
-- Random code collapse는 `code geometry matters`를 강하게 뒷받침한다.
+Keep the notation simple:
 
-#### Figure 3 or Small Table: 200-Rollout Robustness
+- `a in R^D`
+- `b_j = q(a_j) in {0, ..., M-1}`
+- Dense logits in `R^(D x M)`
+- Bitwise logits in `R^(D x k)` with `k = ceil(log2 M)`
 
-넣을 것:
+Admit the expressivity limitation immediately.
 
-- `gvla_1024`
-- `gvla_gray_1024`
-- `gvla_2048`
-- `gvla_gray_2048`
+### Page 3: Method
 
-핵심 수치:
+Minimal method:
 
-- `gvla_1024`: `7/200 = 3.5%`
-- `gvla_gray_1024`: `42/200 = 21.0%`
-- `gvla_2048`: `4/200 = 2.0%`
-- `gvla_gray_2048`: `23/200 = 11.5%`
+- `P = W z`, `P in R^(D x k)`
+- bitwise BCE over code bits
+- optional orthogonality regularizer `||W W^T - I||_F^2`
 
-핵심 통계:
+Orthogonality is not the main contribution. The no-orth result implies it should be described as an optional regularizer, not as the core explanation.
 
-- `Natural vs Gray @ 1024`: `p = 6.55e-08`
-- `Natural vs Gray @ 2048`: `p = 1.95e-04`
+### Page 4: Code geometry
 
-메시지:
+This is the paper's center.
 
-- Gray > Natural은 `200-rollout` 기준에서도 robust하다.
+Figure 1 should combine:
 
-### 3. Main Text Latency Handling
+- Natural discontinuity example `3 = 011`, `4 = 100`
+- Gray adjacency intuition
+- real trajectory diagnostic with bit flips:
+  Natural `2.7796`, Gray `2.2483`, Random `4.0069`
 
-main에는 제한적으로만 넣는다.
+### Pages 5-7: Experiments
 
-넣을 것:
+Only three main questions:
 
-- head-only scaling evidence가 bitwise factorization의 efficiency potential을 보여준다는 점
-- matched end-to-end latency에서는 Dense가 현재 BC setup에서 더 빠르다는 점
+1. Does code geometry affect bitwise action prediction?
+2. Is the effect robust?
+3. What about efficiency?
 
-추천 문장:
+Main figures and tables:
 
-> In matched end-to-end latency measurements, bitwise heads did not outperform the dense baseline in the current BC setup up to `M=2048`, on either CPU or GPU. We therefore treat latency as a qualified secondary analysis rather than a primary result.
+1. Main success table
+   Dense / Natural / Gray at `M = 128 / 256 / 1024 / 2048`
+2. 200-rollout robustness
+   Natural vs Gray at `M = 1024 / 2048`
+3. Reviewer-defense validation table
+   Natural, Natural seed2, Gray, Gray no-orth, Random at `M=1024`
 
-main에는 full latency table을 크게 넣지 않는다.
+Everything else goes to the appendix.
 
-## Appendix
+### Page 8: Related work
 
-### 1. Full Validation Metrics
+Must cite and position against:
 
-넣을 것:
+- output coding / ECOC
+- hierarchical softmax
+- binary label encoding
+- ordinal regression / thermometer encoding
+- discretized continuous control
+- diffusion / mixture / flow policies for multimodal control
 
-- `128 / 256 / 1024 / 2048` 전체 validation metric 표
-- exact bin match 포함
-- `adjacent_near_miss_rate`는 정의와 함께 appendix에만
+Required positioning sentence:
 
-Source:
+> We do not claim to invent binary output codes. Our contribution is to show that, in high-resolution discretized robot control, the code geometry can dominate the learnability of bitwise action heads.
 
-- `experiments/results/bc_study/validation_metrics/validation_metrics.md`
-- `experiments/results/bc_study/reviewer_defense_metrics/validation_metrics.md`
+### Page 9: Limitations
 
-### 2. Full Rollout Robustness
+State plainly:
 
-넣을 것:
-
-- `200-rollout` 전체 표
-- Wilson 95% CI
-- Fisher exact test 전체
-- `dense` 비교 포함
-
-Source:
-
-- `experiments/results/bc_study/rollout_robustness/rollout_robustness.md`
-
-### 3. Full Latency Tables
-
-넣을 것:
-
-- CPU end-to-end latency 표
-- GPU end-to-end latency 표
-- head-only latency artifact 요약
-
-Source:
-
-- `experiments/results/bc_study/end_to_end_latency/end_to_end_latency.md`
-- `experiments/results/bc_study/end_to_end_latency_gpu/end_to_end_latency.md`
-- `experiments/results/bc_study/latency_batch.json`
-
-appendix 메시지:
-
-- head-only scaling은 efficiency potential을 보여준다
-- matched end-to-end latency는 current BC setup에서 Dense가 더 빠르다
-- 따라서 universal latency speedup claim은 하지 않는다
-
-### 4. Experimental Protocol
-
-넣을 것:
-
-- validation split lock
-- latency protocol
-- dataset path
-- rollout count
-- checkpoint provenance
-
-Source:
-
-- `results/validation_split_lock.md`
-- `results/latency_protocol.md`
-- `results/comparison_lock.md`
-- `results/coverage_grid.md`
-
-### 5. Ablation / Reviewer-Defense Details
-
-넣을 것:
-
-- random code seed
-- no-orth setting
-- additional seed naming
-- exact checkpoint paths
-
-### 6. Limitations
-
-appendix에도 재강조할 것:
-
-- low-dimensional BC only
+- low-dimensional BC setting
 - single task family
-- bitwise head는 Dense categorical과 distributionally equivalent하지 않다
-- multimodal action settings에서는 부적절할 수 있다
-- latency gain은 matched end-to-end 결과에서 확인되지 않았다
+- bitwise head is less expressive than dense categorical prediction
+- multimodal action distributions may break independent bit prediction
+- matched end-to-end latency does not improve over Dense in the current BC setup
+- this is not a VLA-scale deployment result
 
-## Final Assembly Checklist
+These limitations are part of the defense, not an embarrassment.
 
-### Main에 반드시 있어야 하는 것
+## Abstract Draft
+
+Use this framing with only minor line-editing:
+
+> High-resolution action discretization can be useful for precision-sensitive robotic control, but standard per-dimension categorical heads scale linearly with the number of bins. We study bitwise action heads as a simple output factorization: each `M`-way action prediction is replaced by `k=ceil(log2 M)` bit predictions. This factorization reduces output dimensionality, but it also changes the learning problem because the target code induces a geometry under bit-wise losses. Natural binary codes can map neighboring action bins to distant codewords, creating discontinuous supervision, while Gray codes preserve local adjacency by ensuring neighboring bins differ by one bit. In controlled behavior cloning experiments with a shared backbone, Gray-coded bitwise heads substantially improve over natural binary bitwise heads. Across 200 evaluation rollouts, Gray improves success from `3.5%` to `21.0%` at `M=1024` and from `2.0%` to `11.5%` at `M=2048`. Validation metrics show the same trend, with Gray reducing action error, bin error, and Hamming error. Additional controls show that the effect is not explained by a second natural-binary seed, does not disappear without orthogonality regularization, and degrades sharply under random code assignments. Matched end-to-end latency does not improve over dense heads in our current BC setup, so we treat efficiency as a qualified secondary analysis. These results frame high-resolution discretized control as an output-factorization problem where code geometry, not only output size, determines learnability.
+
+## Main vs Appendix Allocation
+
+### Keep in main
 
 - code geometry intuition
 - main success table
-- validation/reviewer-defense evidence
+- reviewer-defense validation evidence
 - 200-rollout robustness
 - explicit claim boundary
+- explicit limitation that latency is secondary
 
-### Appendix로 보내야 하는 것
+### Move to appendix
 
-- full metric tables
-- full latency tables
-- protocol details
-- extra implementation details
-- ambiguous metrics definition
+- full validation tables across all metrics
+- full latency tables for CPU and GPU
+- protocol details and split lock
+- implementation details
+- extra ablations and metric definitions
 
-### Main에서 빼야 하는 것
+### Keep out of the paper
 
-- `adjacent_bin_error` 원래 이름
-- 큰 memory exaggeration
-- quantum / collapse narrative
+- quantum or collapse narrative
+- large memory-reduction marketing
 - VLA-scale wording
-- Dense를 일관적으로 이겼다는 식의 문장
+- claims that Dense is consistently beaten
+- claims that orthogonality is essential
+
+## Appendix Layout
+
+- `A. Experimental protocol`
+  dataset, split seed, validation fraction, rollout counts
+- `B. Full validation metrics`
+  all `128 / 256 / 1024 / 2048` tables
+- `C. Rollout robustness`
+  200 rollouts, Wilson CI, Fisher exact tests
+- `D. Latency`
+  CPU and GPU matched end-to-end plus head-only context
+- `E. Code geometry diagnostic`
+  target bit flips and random-code comparison
+- `F. Implementation details`
+  quantization, Gray encode/decode, no-orth, random seed
+- `G. Limitations`
+  expanded version of the main text limitations
+
+## Repository Packaging Guidance
+
+The current public-repo style should not be used as the submission-facing artifact. For paper release or supplementary packaging:
+
+- keep BC experiment code and locked result artifacts
+- remove or archive older VLA-scale and quantum-style narratives
+- remove claims that orthogonality is essential
+- avoid README language about logarithmic routing breakthroughs
+- keep the README claim-limited and reproducibility-focused
+
+Recommended submission-facing README opener:
+
+> This repository contains anonymized code for studying code geometry in bitwise action heads for high-resolution discretized robot control. The main comparison is between dense per-dimension categorical heads, natural-binary bitwise heads, Gray-coded bitwise heads, and random-code controls in a behavior cloning setup. The repository is intended to reproduce the paper's controlled experiments, not to claim universal VLA-scale acceleration.
+
+## Final Decision
+
+Submit.
+
+The last work is not more experimentation. It is claim compression. If the paper looks like a careful small paper that proves one precise fact, it can fight for borderline acceptance. If it looks like a breakthrough pitch, it will get punished.
